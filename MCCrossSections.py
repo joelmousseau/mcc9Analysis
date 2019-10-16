@@ -7,9 +7,11 @@ import numpy as np
 import matplotlib as mpl
 import csv
 import re
+import scipy as sci
 from mpl_toolkits.mplot3d import Axes3D
 from ROOT import TH1, TAxis, gROOT, TCanvas
 from scipy.constants import Avogadro as avosNumber
+from scipy import stats
 ####################################################################################################
 def chanToHistogram(channel):
     if channel == "QE":
@@ -56,7 +58,11 @@ def getW2(Ehad, Q2):
     return 2*targetMass*Ehad + math.pow(targetMass, 2) - Q2
 
 def getW(Ehad, Q2):
-    return math.sqrt(getW2(Ehad, Q2))
+    W2 = getW2(Ehad, Q2)
+    if(W2 >= 0.0):
+      return math.sqrt(W2)
+    else:
+      return -1.0
 
 def getXbj(Ehad, Q2):
     targetMass = 0.989
@@ -127,48 +133,90 @@ class TemplateFitter( ROOT.TPyMultiGenFunction ):
         return chi2
 
 
-
+neutrinoPDG          = 14
 argonDensity         = 1.3954 #g/cm3
-nProtonsPerNucleus   = 18
-nNeutronsPerNucleus = 40 - nProtonsPerNucleus
+#argonNucleons        = 40
+argonNucleons        = 1
+#nProtonsPerNucleus   = 18
+nProtonsPerNucleus   = 0.5
+nNeutronsPerNucleus  = argonNucleons - nProtonsPerNucleus
 molMass              = 39.95 #g/mol
-TPC_X                = 256.4 #cm
-TPC_Y                = 300   #cm
+TPC_X                = 256.35 #cm
+TPC_Y                = 233   #cm
 TPC_Z                = 1000  #cm
 TPC_Volume           = TPC_X*TPC_Y*TPC_Z #cm3
-nTargetProtons       = (nProtonsPerNucleus*argonDensity*TPC_Volume*avosNumber / molMass)
-nTargetNeutrons      = (nNeutronsPerNucleus*argonDensity*TPC_Volume*avosNumber / molMass)
+TPC_Area             = TPC_X*TPC_Y #cm2
+#TPC_Area             = 1.0
+CryoR                = 191.61 #cm from gdml
+CryoL                = 1086.49 #cm from gdml
+CryoVolume           = np.pi*CryoL*CryoR**2
+nTargetProtons       = (nProtonsPerNucleus*argonDensity*CryoVolume*avosNumber / molMass)
+nTargetNeutrons      = (nNeutronsPerNucleus*argonDensity*CryoVolume*avosNumber / molMass)
 
 neutrinoEnergyRange = (0.0, 10.0)
 invariantMassRange = (0.0, 10.0)
 phiRange           = (-1.0, 1.0)
-nBins              = 100
+nBins              = 200
 
-InputFiles      = ["/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_nu_overlay_run1_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_on_data_run1_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_off_data_run1_mcc9.root"]
+fluxScale   = 2.43e11
+detectorPositionScale = 1.029
+#fluxScale   = 1.0
+fluxPOT     = fluxScale
+binWidth    = (neutrinoEnergyRange[1] - neutrinoEnergyRange[0])/nBins
+
+InputFiles      = ["/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_nu_overlay_run1_big_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_on_data_run1_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_off_data_run1_mcc9.root"]
 fluxFileName    = "/uboone/app/users/afurmans/CCNproton_ccinc/analysis/UBAna/Flux/MCC8_FluxHistograms_Uncertainties.root"
 splineFileName  = "/cvmfs/uboone.opensciencegrid.org/products/genie_xsec/v3_00_04a/NULL/G1810a0211a-k250-e1000/data/xsec_graphs.root"
 splineDir       = "nu_mu_Ar40"
 fluxFile        = ROOT.TFile.Open(fluxFileName)
 splineFile      = ROOT.TFile.Open(splineFileName)
 fluxHistogram   = fluxFile.Get("numu/numu_CV_AV_TPC")
-splineGraphs    = ["%s/qel_cc_n" % splineDir, "%s/mec_cc" % splineDir]
+splineGraphs    = ["%s/tot_cc" % splineDir, "%s/qel_cc_n" % splineDir, "%s/mec_cc" % splineDir]
+
+overlayEvents = uproot.open(InputFiles[0])["NuCCanalyzer"]["Event"]
+
+overlayPOT    = uproot.open(InputFiles[0])["NuCCanalyzer"]["subruns"]
+
+mcPOT         = pd.Series(overlayPOT.array("pot")).sum()
+#mcPOT = 1.0
+
+fluxBins = np.empty(fluxHistogram.GetNbinsX()+1, dtype=float)
+fluxHistogram.GetXaxis().GetLowEdge(fluxBins)
+fluxNeutrinos = ((mcPOT*detectorPositionScale)/(TPC_Area*fluxScale))*np.array([fluxHistogram.GetBinContent(bin+1) for bin in range(fluxHistogram.GetNbinsX()+1)], dtype=float)
+fluxBins = fluxBins[:-1]
+fluxNeutrinos = fluxNeutrinos[:-1]
+#print fluxBins
+#print len(fluxNeutrinos)
 
 
-fluxNeutrinos = np.array([fluxHistogram.GetBinContent(bin+1) for bin in range(fluxHistogram.GetNbinsX())], dtype=float)
-fluxBins      = np.array([fluxHistogram.GetBinCenter(bin+1) for bin in range(fluxHistogram.GetNbinsX())], dtype=float)
+#fluxBins      = np.array([fluxHistogram.GetBinCenter(bin+1) for bin in range(fluxHistogram.GetNbinsX())], dtype=float)
 splineList    = []
+splineBins    = []
+
 
 for splineName in splineGraphs:
+    
     graph = splineFile.Get(splineName)
-    splineList.append(np.array([graph.Eval(x) for x in range(graph.GetN())]) )
+    splineList.append(np.array(list(graph.GetY() ) ) )
+    splineBins.append(np.array(list(graph.GetX() ) ) )
 
+#totalNumus        = mcPOT*np.sum(fluxNeutrinos, dtype=float)/(TPC_Area*fluxScale)
+totalNumus        = np.sum(fluxNeutrinos)
+crossSectionDenom = (nTargetNeutrons+nTargetProtons)
+
+#print splineList[0]
+#print splineBins[0]
+
+#print splineList[0]
 print "Number of Neutrinos %e Array Sum %e" % (fluxHistogram.Integral(), np.sum(fluxNeutrinos, dtype=float))
 print "Number of protons %e. Number of neutrons %e" % (nTargetProtons, nTargetNeutrons)
+print "Number of Neutrinos per cm2 (scaled) %e" % totalNumus
+print "Bin Width %.3f" % binWidth
 
-binWidth = (neutrinoEnergyRange[1] - neutrinoEnergyRange[0])/nBins
-print binWidth
 
-crossSectionDenom = (nTargetNeutrons+nTargetProtons)*np.sum(fluxNeutrinos, dtype=float)*binWidth
+#print binWidth
+
+
 
 #OverlayScale  = 1.0
 ExtScale     = 0.97
@@ -177,20 +225,15 @@ empty = []
 
 #plt.figure()
 
-overlayEvents = uproot.open(InputFiles[0])["NuCCanalyzer"]["Event"]
 
-overlayPOT    = uproot.open(InputFiles[0])["NuCCanalyzer"]["subruns"]
-
-mcPOT         = pd.Series(overlayPOT.array("pot")).sum()
 
 #Divide by area
-fluxPOT = 1.6e20
-fluxScale   = 2.43e11
 
-OverlayScale = fluxPOT/(mcPOT*crossSectionDenom)
-print "MC POT: %e Overlay Scale: %.3f" % (mcPOT, OverlayScale)
 
-overlayEvents   = pd.DataFrame(overlayEvents.arrays(["run", "subrun", "event", "mc_nu_interaction_type", "mc_nu_ccnc", "nu_mu_cc_selected", "mc_nu_lepton_energy", "mc_nu_energy", "mc_nu_lepton_theta"]) )
+OverlayScale = argonNucleons*1e38/(crossSectionDenom)
+print "MC POT: %e Overlay Scale: %e" % (mcPOT, OverlayScale)
+
+overlayEvents   = pd.DataFrame(overlayEvents.arrays(["run", "subrun", "event", "mc_nu_interaction_type", "mc_nu_ccnc", "nu_mu_cc_selected", "mc_nu_lepton_energy", "mc_nu_energy", "mc_nu_lepton_theta", "mc_nu_pdg"]) )
 
 overlayWeights = np.full(overlayEvents.shape[0], OverlayScale )
 
@@ -206,50 +249,81 @@ overlayEvents.insert(overlayEvents.shape[1], "wgt", overlayWeights )
 
 #filteredEvents.insert(filteredEvents.shape[1], "wgt", [getInel(x, y) for x, y in zip(filteredEvents['mc_Ehad'], filteredEvents['mc_nu_energy'] ) ] )
 
-stackCode = ''' [overlayEvents.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayEvents.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayEvents.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy()] '''
+stackCode = ''' [overlayEvents.query('mc_channel == "QE" & mc_nu_pdg == @neutrinoPDG')['VAR'].to_numpy(), overlayEvents.query('mc_channel == "RES" & mc_nu_pdg == @neutrinoPDG')['VAR'].to_numpy(), overlayEvents.query('mc_channel == "DIS" & mc_nu_pdg == @neutrinoPDG')['VAR'].to_numpy(), overlayEvents.query('mc_channel == "2p2h" & mc_nu_pdg == @neutrinoPDG')['VAR'].to_numpy()] '''
 
-weightsArray = [overlayEvents.query('mc_channel == "QE"')['wgt'].to_numpy(), overlayEvents.query('mc_channel == "RES"')['wgt'], overlayEvents.query('mc_channel == "DIS"')['wgt'], overlayEvents.query('mc_channel == "2p2h"')['wgt'].to_numpy()]
+#stackSumCode = ''' overlayEvents.query('mc_channel == "QE"')['VAR'].to_numpy() + overlayEvents.query('mc_channel == "RES"')['VAR'].to_numpy() + overlayEvents.query('mc_channel == "DIS"')['VAR'].to_numpy() + overlayEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy() '''
+
+weightsArray = [overlayEvents.query('mc_channel == "QE" & mc_nu_pdg == @neutrinoPDG')['wgt'].to_numpy(), overlayEvents.query('mc_channel == "RES" & mc_nu_pdg == @neutrinoPDG')['wgt'], overlayEvents.query('mc_channel == "DIS" & mc_nu_pdg == @neutrinoPDG')['wgt'], overlayEvents.query('mc_channel == "2p2h" & mc_nu_pdg == @neutrinoPDG')['wgt'].to_numpy()]
 
 exec( "energyStack = " + re.sub(r'VAR', 'mc_nu_energy', stackCode) )
+#exec( "energyStackSum = " + re.sub(r'VAR', 'mc_nu_energy', stackSumCode) )
 exec( "wStack = " + re.sub(r'VAR', 'mc_expW', stackCode) )
 
 
 
 
-fig = plt.figure()
-plt.hist(energyStack, bins=nBins, stacked=True, range=neutrinoEnergyRange, color = ['b', 'g', 'y', 'r'], weights=weightsArray )
-plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other'])
+
+crossSectionStack = []
+fluxStack         = []
+sum     = np.zeros(len(fluxBins[:-1]), dtype=float)
+sumErrs = np.zeros(len(fluxBins[:-1]), dtype=float)
+#print fluxBins[:-1]
+bin_centers       = (fluxBins[:-1] + fluxBins[1:]) / 2
+#print bin_centers
+for i in range(len(energyStack)):
+  counts, bin_edges, something = sci.stats.binned_statistic(energyStack[i], energyStack[i], "count", bins=fluxBins, range=neutrinoEnergyRange)
+  crossSectionStack.append(np.nan_to_num(OverlayScale*counts/fluxNeutrinos[:-1]) )
+
+  sumErrs =  np.add(sum, counts)
+  sum = np.add(sum, np.nan_to_num(OverlayScale*counts/fluxNeutrinos[:-1]) )
+  fluxStack.append(fluxBins)
+
+
+#counts, bin_edges, something = plt.hist(crossSectionStack, bins=nBins, stacked=True, range=neutrinoEnergyRange, color = ['b', 'g', 'y', 'r']) #unscaled version to get the errors right
+#plt.show()
+
+#print sum
+#plt.hist(energyStack, bins=nBins, stacked=True, range=neutrinoEnergyRange, color = ['b', 'g', 'y', 'r'], weights=weightsArray )
+sumErrs = OverlayScale*np.sqrt(sumErrs)/fluxNeutrinos[:-1]
+
+bin_centers       = (fluxBins[:-1] + fluxBins[1:]) / 2
+splineValues = np.interp(bin_centers, splineBins[0], splineList[0], right=0.0)
+fig = plt.figure(1)
+#plt.scatter(fluxStack[0], sum, color = "black")
+plt.errorbar(fluxBins[:-1], sum, yerr=sumErrs, fmt='o', color='black')
+plt.plot(fluxBins[:-1], splineValues, color='red')
+plt.legend(['Spline', 'CCInc'])
 plt.title("Neutrino Energy")
 plt.xlabel("Energy (GeV)")
 plt.ylabel("Number of Events / %e POT" % mcPOT)
-plt.xlim(0.0, 7.0)
-plt.show()
+plt.xlim(0.0, 5.0)
+plt.ylim(0.0, 200.0)
+#plt.show()
 
-fig = plt.figure()
-plt.hist(wStack, bins=100, stacked=True, range=invariantMassRange, color = ['b', 'g', 'y', 'r'], weights=weightsArray )
-plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other'])
-plt.title("Invariant Mass")
-plt.xlabel("W (GeV/c^2)")
+fig = plt.figure(2)
+plt.hist(energyStack, bins=fluxBins, stacked=True, range=neutrinoEnergyRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+plt.plot(fluxBins[:-1], 33*fluxNeutrinos[:-1], color='black')
+plt.legend(['MCC8 Flux', 'QE', 'RES', 'DIS', '2p2h'])
+plt.title("Neutrino Energy")
+plt.xlabel("E_{\nu} (GeV)")
 plt.ylabel("Number of Events / %e POT" % mcPOT)
-plt.xlim(0.0, 3.0)
+plt.xlim(0.0, 5.0)
+#plt.show()
+
+fig = plt.figure(3)
+plt.hist(energyStack, bins=fluxBins[:-1], stacked=True, density=True, range=neutrinoEnergyRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+fluxXSec = np.multiply(fluxNeutrinos[:-1], splineValues)
+norm = np.trapz(fluxXSec, dx=0.05)
+print "Normalization: %.2e" % norm
+print fluxBins
+print (fluxXSec/norm)
+
+plt.plot(fluxBins[:-1], fluxXSec/norm, color='black')
+plt.legend(['Flux X Xsection', 'QE', 'RES', 'DIS', '2p2h'])
+plt.title("Neutrino Energy")
+plt.xlabel("Energy (GeV)")
+plt.ylabel("Abr.")
+plt.xlim(0.0, 5.0)
 plt.show()
 
-
-'''
-fig = plt.figure()
-trueEnergy = pd.DataFrame(overlayEvents.arrays(["mc_nu_energy", "nu_mu_cc_selected", "mc_nu_interaction_type", "mc_nu_ccnc"]) )
-data_hist = dataify(trueEnergy['mc_nu_energy'].to_numpy(), 50)
-result = trueEnergy.query('nu_mu_cc_selected == True')
-
-trueEnergy['mc_nu_energy'].hist(bins=50, grid=False)
-result['mc_nu_energy'].hist(bins=50, grid=False)
-plt.errorbar(data_hist[0], data_hist[1], yerr=data_hist[2], fmt='o', color='black')
-plt.xlabel("Neturino Energy (GeV)")
-plt.legend(['No Cuts', 'Selected'])
-#df = trueEnergyDict)
-
-#print array
-
-plt.show()
-'''
 sys.exit()
