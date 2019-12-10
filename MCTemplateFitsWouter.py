@@ -7,8 +7,11 @@ import numpy as np
 import matplotlib as mpl
 import csv
 import re
+import scipy as sci
 from mpl_toolkits.mplot3d import Axes3D
 from ROOT import TH1, TAxis, gROOT, TCanvas
+from scipy import stats
+
 ####################################################################################################
 def chanToHistogram(channel):
     if channel == "QE":
@@ -44,18 +47,54 @@ def getChan(interaction, isNC):
     elif(interaction == 10):
       return "2p2h"
 
+def getChanWeight(interaction, isNC):
+    templateFactors = [6.47365e-01, 1.20327e-07, 6.02801e-08, 2.71038e-08, 3.42514e-01, 1.00000e-02]
+    if (isNC):
+      return (1.0 + templateFactors[4])
+    elif(interaction == 0):
+      return (1.0 + templateFactors[0])
+    elif(interaction == 1):
+      return (1.0 + templateFactors[1])
+    elif(interaction == 2):
+      return (1.0 + templateFactors[2])
+    elif(interaction == 10):
+      return (1.0 + templateFactors[3])
+
+
+
+def dotProduct(df1, df2, dim1, dim2, dimList):
+   returnSeries = pd.Series(0.0, index=df1.index.copy())
+  # print df1['%s' % dim1]*df1['%s' % "track_dirx"]
+  # print df2['%s' % dim2]*df2['%s' % "track_dirx"]
+  # print df1['%s' % dim1]*df1['%s' % "track_dirx"] + df2['%s' % dim2]*df2['%s' % "track_dirx"]
+   denomSeries = df1['%s' % dim1]*df2['%s' % dim2]
+   #print denomSeries
+
+   for dim in dimList:    
+       returnSeries += (df1['%s' % dim1]*df1['%s' % dim]*df2['%s' % dim2]*df2['%s' % dim])/denomSeries
+       #print returnSeries
+   #print returnSeries
+   return returnSeries.to_numpy()
+
 def getPhi(pY, pX):
     return (np.arctan2(pY, pX) / np.pi)
 
 def getQ2(nuE, nuMu, thetaMu):
     return 4*nuE*nuMu*math.pow(math.sin(thetaMu/2), 2)
 
-def getW2(Ehad, Q2):
+def getW2(Ehad, Q2, interaction):
     targetMass = 0.989
+    #if it's a 2p 2 h, you have 2ps as your target! Wakka Wakka Wakka!
+    if(interaction == "2p2h"):
+      targetMass = 2*targetMass
     return 2*targetMass*Ehad + math.pow(targetMass, 2) - Q2
 
-def getW(Ehad, Q2):
-    return math.sqrt(getW2(Ehad, Q2))
+def getW(Ehad, Q2, interaction):
+    W2 = getW2(Ehad, Q2, interaction)
+    if(W2 >= 0.0):
+      return math.sqrt(W2)
+    else:
+      return -1.0
 
 def getXbj(Ehad, Q2):
     targetMass = 0.989
@@ -126,12 +165,13 @@ class TemplateFitter( ROOT.TPyMultiGenFunction ):
         return chi2
 
 
-InputFiles = ["/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_nu_overlay_run1_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_on_data_run1_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_off_data_run1_mcc9.root"]
+InputFiles = ["/uboone/data/users/joelam/NuMuCC_Sept16/run1/nucc_nu_overlay_run1_big_mcc9.root", "/uboone/data/users/joelam/NuMuCC_Sept16/run1/nucc_on_data_run1_mcc9.root", "/uboone/data/users/joelam/NuMuCC_Sept16/run1/nucc_off_data_run1_mcc9.root"]
 
 #OverlayScale  = 1.0
 ExtScale     = 0.97
 numMCTemplates = 6
 empty = []
+
 
 maxProtonChi2 = 88.0
 minTrackScore = 0.5
@@ -144,19 +184,28 @@ extEvents     = uproot.open(InputFiles[2])["NuCCanalyzer"]["Event"]
 overlayPOT    = uproot.open(InputFiles[0])["NuCCanalyzer"]["subruns"]
 
 #Scale factors, because we generate more simulation than data. We also do not take an equal ammount of on and off beam data (though it is close)
-mcPOT         = pd.Series(overlayPOT.array("pot")).sum()
-dataPOT       = 4.206e+19
+mcPOT         = pd.Series(overlayPOT.array("pot"))
+sumPOT        = mcPOT.sum()
+
+dataPOT       = 4.21e+19
 bnbSpills     = 9932159.0
 extTriggers   = 14675888.0
+maxEvents     = 35000
 
-OverlayScale = dataPOT / mcPOT
+
+
 ExtScale     = bnbSpills / extTriggers
+ExtTemplateWeight = (1.0 + 1.00000e-02)
 
 #Create frames of the event tree (which has information about the interaction) and the duaghters tree (which has information about the particles within the interaction).
 #Do this for "overlay" simulation, beam data, and off-beam data
 overlayDaughters = uproot.open(InputFiles[0])["NuCCanalyzer"]["Daughters"]
 trackDaughters   = pd.DataFrame(overlayDaughters.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "run", "subrun", "event"] ) )
 filteredEvents   = pd.DataFrame(overlayEvents.arrays(["run", "subrun", "event", "mc_nu_interaction_type", "mc_nu_ccnc", "nu_mu_cc_selected", "mc_nu_lepton_energy", "mc_nu_energy", "mc_nu_lepton_theta"]) )
+
+OverlayScale = dataPOT / (sumPOT*(float(maxEvents)/trackDaughters.shape[0]))
+print "MC POT: %e or %e Overlay Scale: %.3f Ext Scale: %.3f" % (sumPOT, sumPOT*(float(maxEvents)/trackDaughters.shape[0]), OverlayScale, ExtScale)
+print "Total MC POT: %e total MC events: %d" % (mcPOT.sum(), trackDaughters.shape[0])
 
 dataDaughters = uproot.open(InputFiles[1])["NuCCanalyzer"]["Daughters"]
 trackData     = pd.DataFrame(dataDaughters.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "run", "subrun", "event"] ) )
@@ -166,33 +215,33 @@ extDaughters = uproot.open(InputFiles[2])["NuCCanalyzer"]["Daughters"]
 trackExt     = pd.DataFrame(extDaughters.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "run", "subrun", "event"] ) )
 filteredExt  = pd.DataFrame(extEvents.arrays(["run", "subrun", "event", "nu_mu_cc_selected"]) )
 
-overlayWeights = np.full(filteredEvents.shape[0], OverlayScale )
-
 #Here, we calculate some additional event information that isn't part of the input ROOT ntuple
 #This is because the grad. student who created the files didn't include this information
 filteredEvents.insert(filteredEvents.shape[1], "DuplicatedEvent", filteredEvents.duplicated() ) #Tag the events which are duplicated
 filteredEvents.insert(filteredEvents.shape[1], "mc_channel", [getChan(x, y) for x, y in zip(filteredEvents['mc_nu_interaction_type'], filteredEvents['mc_nu_ccnc'])] ) #Classify neutrino events based on CC / NC and event Type
 filteredEvents.eval('mc_Ehad = mc_nu_energy - mc_nu_lepton_energy', inplace=True) #Insert the true energy transfer (nu)
 filteredEvents.insert(filteredEvents.shape[1], "mc_expQ2", [getQ2(x, y, z) for x, y, z in zip(filteredEvents['mc_nu_energy'], filteredEvents['mc_nu_lepton_energy'], filteredEvents['mc_nu_lepton_theta'])] )
-filteredEvents.insert(filteredEvents.shape[1], "mc_expW", [getW(x, y) for x, y in zip(filteredEvents['mc_Ehad'], filteredEvents['mc_expQ2'] ) ] )
+filteredEvents.insert(filteredEvents.shape[1], "mc_expW", [getW(x, y, z) for x, y, z in zip(filteredEvents['mc_Ehad'], filteredEvents['mc_expQ2'], filteredEvents['mc_channel'] ) ] )
 filteredEvents.insert(filteredEvents.shape[1], "mc_expXbj", [getXbj(x, y) for x, y in zip(filteredEvents['mc_Ehad'], filteredEvents['mc_expQ2'] ) ] )
 filteredEvents.insert(filteredEvents.shape[1], "mc_expY", [getInel(x, y) for x, y in zip(filteredEvents['mc_Ehad'], filteredEvents['mc_nu_energy'] ) ] )
-filteredEvents.insert(filteredEvents.shape[1], "wgt", overlayWeights )
+#filteredEvents.insert(filteredEvents.shape[1], "template_wgt", [getChanWeight(x, y) for x, y in zip(filteredEvents['mc_nu_interaction_type'], filteredEvents['mc_nu_ccnc'])] ) #Classify neutrino events based on CC / NC and event Type
+filteredEvents.insert(filteredEvents.shape[1], "pot", mcPOT)
+#filteredEvents.eval('combined_wgt = wgt*template_wgt', inplace=True)
 
 trackDaughters.insert(trackDaughters.shape[1], "phi", [getPhi(x, y) for x, y in zip(trackDaughters['track_diry'], trackDaughters['track_dirx'] ) ] )
 
-
-extWeights      = np.full(filteredExt.shape[0],  ExtScale)
+extWeights              = np.full(filteredExt.shape[0],  ExtScale)
+extTemplateWeights      = np.full(filteredExt.shape[0],  ExtTemplateWeight)
 
 filteredData.insert(filteredData.shape[1], "DuplicatedEvent", filteredData.duplicated() ) #Tag the events which are duplicated
 trackData.insert(trackData.shape[1], "phi", [getPhi(x, y) for x, y in zip(trackData['track_diry'], trackData['track_dirx'] ) ] )
 
 filteredExt.insert(filteredExt.shape[1], "DuplicatedEvent", filteredExt.duplicated() ) #Tag the events which are duplicated
 filteredExt.insert(filteredExt.shape[1], "wgt", extWeights )
+filteredExt.insert(filteredExt.shape[1], "template_wgt", extTemplateWeights )
+filteredExt.eval('combined_wgt = wgt*template_wgt', inplace=True)
 
 trackExt.insert(trackExt.shape[1], "phi", [getPhi(x, y) for x, y in zip(trackExt['track_diry'], trackExt['track_dirx'] ) ] )
-
-print "MC POT: %e Overlay Scale: %.3f Ext Scale: %.3f" % (mcPOT, OverlayScale, ExtScale)
 
 #Index the events and daugthers by the run, subrun, event tuple
 #This is IMPORTANT. The only infomration we have to connect the two frames a priori is this set of 3 ints
@@ -209,17 +258,22 @@ filteredExt    = filteredExt.set_index(['run', 'subrun', 'event'])
 trackExt       = trackExt.set_index(['run', 'subrun', 'event'])
 
 #Do this to make our loops and lookups a bit more efficienct
+
 trackDaughters.sort_index()
 filteredEvents.sort_index()
+trackDaughters = trackDaughters.iloc[:maxEvents]
+
+numberFiltered = 0
 
 #create a dict of event info we want to associate with each daughter.
 #by doing this, we have the complete event information for each track.
 #Really what we want is to look at the particles' properties as a funciton of the underlying event information
 #This is extendible to any event varaible we want to associate to a particle
-interactionInfo = {"DuplicatedEvent" : [], "mc_channel" : [], "nu_mu_cc_selected" : [], "mc_Ehad" : [], "mc_expQ2" : [], "mc_expXbj" : [], "mc_expY" : [], "mc_expW" : [], "wgt" : [] }
+interactionInfo = {"DuplicatedEvent" : [], "mc_channel" : [], "nu_mu_cc_selected" : [], "mc_Ehad" : [], "mc_expQ2" : [], "mc_expXbj" : [], "mc_expY" : [], "mc_expW" : [], "pot" : [] }
 
 for index, row in trackDaughters.iterrows():
-
+    if(numberFiltered % 10000 == 0):
+      print "Filtered: %d" % numberFiltered  
     #This gets around duplicate events. It's a bit clunky
     #If we didn't have duplicate events, we could fairly easily join the daughters / event dataframes based on multindex
     if type(filteredEvents.at[index, "DuplicatedEvent"]) is np.ndarray:
@@ -229,6 +283,9 @@ for index, row in trackDaughters.iterrows():
     else:
         for itype in interactionInfo:
            interactionInfo[itype].append( filteredEvents.at[index, itype] )
+    numberFiltered += 1
+
+
 
 dataInfo = {"DuplicatedEvent" : [], "nu_mu_cc_selected" : []}
 
@@ -244,7 +301,7 @@ for index, row in trackData.iterrows():
         for itype in dataInfo:
             dataInfo[itype].append( filteredData.at[index, itype] )
 
-extInfo = {"DuplicatedEvent" : [], "nu_mu_cc_selected" : [], "wgt" : []}
+extInfo = {"DuplicatedEvent" : [], "nu_mu_cc_selected" : [], "wgt" : [], "template_wgt" : [], "combined_wgt" : [] }
 
 for index, row in trackExt.iterrows():
     
@@ -260,11 +317,24 @@ for index, row in trackExt.iterrows():
 
 muonMomentumRange   = (0.0, 2.0)
 protonMomentumRange = (0.0, 1.5)
-phiRange = (-1.0, 1.0)
+phiRange = (-1.5, 1.5)
 
 #associate all the event info with the particles (at last!)
 for itype in interactionInfo:
    trackDaughters.insert(trackDaughters.shape[1], itype, interactionInfo[itype])
+
+#sumPOT = trackDaughters['pot'].sum()
+'''
+print trackDaughters['pot']
+print trackDaughters.groupby(level=["run", "subrun", "event"]).agg({"pot" : ["min"]})
+sumPOT = trackDaughters.groupby(level=["run", "subrun", "event"]).agg({"pot" : ["min"]}).sum()
+'''
+
+
+overlayWeights = np.full(trackDaughters.shape[0], OverlayScale )
+
+#overlayWeights = np.full(trackDaughters.shape[0], 1.0 )
+trackDaughters.insert(trackDaughters.shape[1], "wgt", overlayWeights )
 
 for itype in dataInfo:
    trackData.insert(trackData.shape[1], itype, dataInfo[itype])
@@ -283,8 +353,12 @@ protonTracks = trackDaughters.query('DuplicatedEvent == False & nu_mu_cc_selecte
 
 
 leadingProtons = protonTracks.groupby(level=["run", "subrun", "event"]).agg({"track_range_mom_p" : ["max", "count"]})
+leadingMuons   = muonTracks.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
 # Using ravel, and a string join, we can create better names for the columns:
 leadingProtons.columns = ["_".join(x) for x in leadingProtons.columns.ravel()]
+leadingMuons.columns = ["_".join(x) for x in leadingMuons.columns.ravel()]
+#print leadingProtons.head()
+#leadingProtons.eval('isLeadingP = (track_range_mom_p == track_range_mom_p_max)', inplace=True)
 '''
 for x in leadingProtons.columns.ravel():
    print x[1]
@@ -299,20 +373,35 @@ for index, rows in leadingProtons.iterrows():
 '''
 
 protonTracks = protonTracks.join(leadingProtons, on=["run", "subrun", "event"])
+protonTracks.eval('isLeadingP = (track_range_mom_p == track_range_mom_p_max)', inplace=True)
+
+muonTracks = muonTracks.join(leadingMuons, on=["run", "subrun", "event"])
+muonTracks.eval('isLeadingMu = (track_mcs_mom == track_mcs_mom_max)', inplace=True)
+
+
 muonTracks   = muonTracks.join(leadingProtons, on=["run", "subrun", "event"])
+protonTracks   = protonTracks.join(leadingMuons, on=["run", "subrun", "event"])
+#print protonTracks.query('track_range_mom_p_count > 1')
 
-#print muonTracks.loc((6959, 223, 11193))
-#print protonTracks.loc((6959, 223, 11193))
-#print leadingProtons.get_level_values('event')
-#print leadingProtons
 extProtons   = trackExt.query('DuplicatedEvent == False & nu_mu_cc_selected == True & track_is_muon_candidate == False & track_chi2_proton < @maxProtonChi2 & track_score > @minTrackScore')
-
 leadingExtProtons = extProtons.groupby(level=["run", "subrun", "event"]).agg({"track_range_mom_p" : ["max", "count"]})
+leadingExtMuons   = extMuons.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
 # Using ravel, and a string join, we can create better names for the columns:
 leadingExtProtons.columns = ["_".join(x) for x in leadingExtProtons.columns.ravel()]
+leadingExtMuons.columns = ["_".join(x) for x in leadingExtMuons.columns.ravel()]
 
-extMuons   = extMuons.join(leadingExtProtons, on=["run", "subrun", "event"])
 extProtons = extProtons.join(leadingExtProtons, on=["run", "subrun", "event"])
+extProtons = extProtons.join(leadingExtMuons, on=["run", "subrun", "event"])
+extProtons.eval('isLeadingP = (track_range_mom_p == track_range_mom_p_max)', inplace=True)
+
+extMuons   = extMuons.join(leadingExtMuons, on=["run", "subrun", "event"])
+extMuons   = extMuons.join(leadingExtProtons, on=["run", "subrun", "event"])
+extMuons.eval('isLeadingMu = (track_mcs_mom == track_mcs_mom_max)', inplace=True)
+
+
+
+
+
 
 
 #Define the general queries (n P, 1 P, etc.) here. Then, use regex to query any variable I choose
@@ -356,35 +445,62 @@ exec( "incProtonStack     = "  + re.sub(r'VAR', 'track_range_mom_p', inclusivePr
 exec( "incProtonPhiStack  = "  + re.sub(r'VAR', 'phi', inclusiveProtons) )
 exec( "incProtonWeights   = "  + re.sub(r'VAR', 'wgt', inclusiveProtons) )
 
-exec( "nPProtonStack     = "  + re.sub(r'VAR', 'track_range_mom_p_max', nPProtons) )
-exec( "nPProtonWeights   = "  + re.sub(r'VAR', 'wgt', nPProtons) )
+exec( "nPProtonStack      = "  + re.sub(r'VAR', 'track_range_mom_p_max', nPProtons) )
+exec( "nPPhiProtonStack   = "  + re.sub(r'VAR', 'phi', nPProtons) )
+exec( "nPProtonWeights    = "  + re.sub(r'VAR', 'wgt', nPProtons) )
 
-exec( "onePProtonStack   = "  + re.sub(r'VAR', 'track_range_mom_p', onePProtons) )
-exec( "onePProtonWeights = "  + re.sub(r'VAR', 'wgt', onePProtons) )
+exec( "onePProtonStack    = "  + re.sub(r'VAR', 'track_range_mom_p', onePProtons) )
+exec( "onePPhiProtonStack = "  + re.sub(r'VAR', 'phi', onePProtons) )
+exec( "onePProtonWeights  = "  + re.sub(r'VAR', 'wgt', onePProtons) )
 
-exec( "twoPProtonStack = "  + re.sub(r'VAR', 'track_range_mom_p_max', twoPProtons) )
-exec( "twoPProtonWeights   = "  + re.sub(r'VAR', 'wgt', twoPProtons) )
+exec( "twoPProtonStack    = "  + re.sub(r'VAR', 'track_range_mom_p_max', twoPProtons) )
+exec( "twoPPhiProtonStack = "  + re.sub(r'VAR', 'phi', twoPProtons) )
+exec( "twoPProtonWeights  = "  + re.sub(r'VAR', 'wgt', twoPProtons) )
 
+MCType = ("QE", "RES", "DIS", "2p2h", "NC / Other")
+muonProtonTheta = []
+muonProtonThetaWeights = []
+muonProtonPhiDiff      = []
+#print protonTracks.query('track_mcs_mom_count ==1 & isLeadingP==True & mc_channel == "QE"')
+#print muonTracks.query('track_mcs_mom_count ==1 & track_range_mom_p_count > 0 & mc_channel == "QE"')
+for chan in MCType:
+  #muonProtonTheta.append(dotProduct(protonTracks.query('track_mcs_mom_count ==1 & track_range_mom_p_count == 1 & mc_channel == @chan'), muonTracks.query('track_mcs_mom_count ==1 & track_range_mom_p_count == 1 & mc_channel == @chan'), "track_mcs_mom", "track_range_mom_p", ["track_dirx", "track_diry", "track_dirz"]))
+  muonProtonTheta.append(dotProduct(protonTracks.query('track_mcs_mom_count ==1 & isLeadingP==True & mc_channel == @chan'), muonTracks.query('track_mcs_mom_count ==1 & track_range_mom_p_count > 0 & mc_channel == @chan'), "track_mcs_mom", "track_range_mom_p", ["track_dirx", "track_diry", "track_dirz"]))
 
-momentumStack = [muonTracks.query('mc_channel == "QE"')['track_mcs_mom'].to_numpy(), muonTracks.query('mc_channel == "RES"')['track_mcs_mom'].to_numpy(), muonTracks.query('mc_channel == "DIS"')['track_mcs_mom'].to_numpy(), muonTracks.query('mc_channel == "2p2h"')['track_mcs_mom'].to_numpy(), muonTracks.query('mc_channel == "NC / Other"')['track_mcs_mom'].to_numpy(), extMuons['track_mcs_mom'].to_numpy() ]
-muonPhiStack = [muonTracks.query('mc_channel == "QE"')['phi'].to_numpy(), muonTracks.query('mc_channel == "RES"')['phi'].to_numpy(), muonTracks.query('mc_channel == "DIS"')['phi'].to_numpy(), muonTracks.query('mc_channel == "2p2h"')['phi'].to_numpy(), muonTracks.query('mc_channel == "NC / Other"')['phi'].to_numpy(), extMuons['phi'].to_numpy() ]
-protonPhiStack = [protonTracks.query('mc_channel == "QE"')['phi'].to_numpy(), protonTracks.query('mc_channel == "RES"')['phi'].to_numpy(), protonTracks.query('mc_channel == "DIS"')['phi'].to_numpy(), protonTracks.query('mc_channel == "2p2h"')['phi'].to_numpy(), protonTracks.query('mc_channel == "NC / Other"')['phi'].to_numpy(), extProtons['phi'].to_numpy() ]
-muonWeights   = [muonTracks.query('mc_channel == "QE"')['wgt'].to_numpy(), muonTracks.query('mc_channel == "RES"')['wgt'].to_numpy(), muonTracks.query('mc_channel == "DIS"')['wgt'].to_numpy(), muonTracks.query('mc_channel == "2p2h"')['wgt'].to_numpy(), muonTracks.query('mc_channel == "NC / Other"')['wgt'].to_numpy(), extMuons['wgt'].to_numpy() ]
-protonWeights = [protonTracks.query('mc_channel == "QE"')['wgt'].to_numpy(), protonTracks.query('mc_channel == "RES"')['wgt'].to_numpy(), protonTracks.query('mc_channel == "DIS"')['wgt'].to_numpy(), protonTracks.query('mc_channel == "2p2h"')['wgt'].to_numpy(), protonTracks.query('mc_channel == "NC / Other"')['wgt'].to_numpy(), extProtons['wgt'].to_numpy() ]
-protonStack = [protonTracks.query('mc_channel == "QE"')['track_range_mom_p'].to_numpy(), protonTracks.query('mc_channel == "RES"')['track_range_mom_p'].to_numpy(), protonTracks.query('mc_channel == "DIS"')['track_range_mom_p'].to_numpy(), protonTracks.query('mc_channel == "2p2h"')['track_range_mom_p'].to_numpy(), protonTracks.query('mc_channel == "NC / Other"')['track_range_mom_p'].to_numpy(), extProtons['track_range_mom_p'].to_numpy() ]
+  muonProtonThetaWeights.append(protonTracks.query('track_mcs_mom_count ==1 & isLeadingP==True & mc_channel == @chan')['wgt'].to_numpy())
+  muonProtonPhiDiff.append(np.absolute(muonTracks.query('track_mcs_mom_count ==1 & track_range_mom_p_count > 0 &  mc_channel == @chan')['phi'].to_numpy() - protonTracks.query('track_mcs_mom_count ==1  & isLeadingP==True & mc_channel == @chan')['phi'].to_numpy()))
+
+muonProtonTheta.append(dotProduct(extProtons.query('track_mcs_mom_count ==1 & isLeadingP==True'), extMuons.query('track_mcs_mom_count ==1 & track_range_mom_p_count > 0'), "track_mcs_mom", "track_range_mom_p", ["track_dirx", "track_diry", "track_dirz"]))
+muonProtonThetaWeights.append(extProtons.query('track_mcs_mom_count ==1 & isLeadingP==True')['wgt'].to_numpy())
+muonProtonPhiDiff.append(extMuons.query('track_mcs_mom_count ==1 & track_range_mom_p_count > 0')['phi'].to_numpy() - extProtons.query('track_mcs_mom_count ==1 & isLeadingP==True')['phi'].to_numpy())
+
+#MuonProtonAngle =
+
+#print MuonProtonAngle
 
 dataMuons   = trackData.query('DuplicatedEvent == False & nu_mu_cc_selected == True & track_is_muon_candidate == True & track_score > @minTrackScore')
 dataProtons = trackData.query('DuplicatedEvent == False & nu_mu_cc_selected == True & track_is_muon_candidate == False & track_chi2_proton < @maxProtonChi2 & track_score > @minTrackScore')
 
+
 leadingDataProtons = dataProtons.groupby(level=["run", "subrun", "event"]).agg({"track_range_mom_p" : ["max", "count"]})
+leadingDataMuons   = dataMuons.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
+
 # Using ravel, and a string join, we can create better names for the columns:
 leadingDataProtons.columns = ["_".join(x) for x in leadingDataProtons.columns.ravel()]
+leadingDataMuons.columns = ["_".join(x) for x in leadingDataMuons.columns.ravel()]
 
-dataMuons   = dataMuons.join(leadingDataProtons, on=["run", "subrun", "event"])
 dataProtons = dataProtons.join(leadingDataProtons, on=["run", "subrun", "event"])
+dataProtons   = dataProtons.join(leadingDataMuons, on=["run", "subrun", "event"])
+dataProtons.eval('isLeadingP = (track_range_mom_p == track_range_mom_p_max)', inplace=True)
+
+dataMuons   = dataMuons.join(leadingDataMuons, on=["run", "subrun", "event"])
+dataMuons   = dataMuons.join(leadingDataProtons, on=["run", "subrun", "event"])
+dataMuons.eval('isLeadingMu = (track_mcs_mom == track_mcs_mom_max)', inplace=True)
 
 dataMuonPhi   = trackData.query('DuplicatedEvent == False & nu_mu_cc_selected == True & track_is_muon_candidate == True & track_score > @minTrackScore')
 dataProtonPhi = trackData.query('DuplicatedEvent == False & nu_mu_cc_selected == True & track_is_muon_candidate == False & track_chi2_proton < @maxProtonChi2 & track_score > @minTrackScore')
+
+nProtonMomentumBins = 25
 
 figNumber = 1
 fig = plt.figure(figNumber)
@@ -398,7 +514,6 @@ plt.errorbar(data_hist[0], data_hist[1], yerr=data_hist[2], fmt='o', color='blac
 plt.xlim(0.0, 2.0)
 figNumber = figNumber + 1
 
-
 fig = plt.figure(figNumber)
 plt.hist(nPMomentumStack, bins=18, stacked=True, range=muonMomentumRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = nPMuonWeights )
 plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
@@ -411,7 +526,7 @@ plt.xlim(0.0, 2.0)
 figNumber = figNumber + 1
 
 fig = plt.figure(figNumber)
-plt.hist(onePMomentumStack, bins=18, stacked=True, range=muonMomentumRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = onePMuonWeights )
+stack, momBins, something = plt.hist(onePMomentumStack, bins=18, stacked=True, range=muonMomentumRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = onePMuonWeights )
 plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
 plt.title("MCS Momentum: (1 mu 1 p)")
 plt.xlabel("Momentum (GeV/c)")
@@ -443,14 +558,41 @@ plt.errorbar(data_proton_hist[0], data_proton_hist[1], yerr=data_proton_hist[2],
 figNumber = figNumber + 1
 
 fig = plt.figure(figNumber)
-plt.hist(nPProtonStack, bins=50, stacked=True, range=protonMomentumRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = nPProtonWeights )
+plt.hist(nPProtonStack, bins=nProtonMomentumBins, stacked=True, range=protonMomentumRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = nPProtonWeights )
 plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
 plt.title("Leading Proton Range Momentum")
 plt.xlabel("Momentum (GeV/c)")
 plt.ylabel("Number of Protons")
-data_proton_hist = dataify(dataProtons['track_range_mom_p_max'].to_numpy(), 50, protonMomentumRange)
+data_proton_hist = dataify(dataProtons['track_range_mom_p_max'].to_numpy(), nProtonMomentumBins, protonMomentumRange)
 plt.errorbar(data_proton_hist[0], data_proton_hist[1], yerr=data_proton_hist[2], fmt='o', color='black')
 figNumber = figNumber + 1
+
+crossSectionStack = ()
+templateFactors   = []
+
+File = ROOT.TFile.Open("Templates.root", "RECREATE")
+dataHist = ROOT.TH1F("Data", "Data", nProtonMomentumBins, 0, nProtonMomentumBins)
+for i in range(len(data_proton_hist[1])):
+   dataHist.SetBinContent(i+1, data_proton_hist[1][i])
+dataHist.Write()   
+
+for i in range(len(nPProtonStack)):
+  # counts, bin_edges, something = sci.stats.binned_statistic(nPProtonStack[i], nPProtonWeights[i], "sum", bins=nProtonMomentumBins, range=protonMomentumRange)
+   counts, bin_edges, something = sci.stats.binned_statistic(nPProtonStack[i], nPProtonStack[i], "count", bins=nProtonMomentumBins, range=protonMomentumRange)
+
+   #print counts
+   templateHist    = ROOT.TH1F(("template%d" % i), ("Template %d" % i), nProtonMomentumBins, 0, nProtonMomentumBins)
+   templateWeights = ROOT.TH1F(("templateWeight%d" % i), ("Template %d" % i), nProtonMomentumBins, 0, nProtonMomentumBins)
+   for j in range(len(counts)):
+     templateHist.SetBinContent(j+1, counts[j])
+     #print nPProtonWeights[i][0]
+     templateWeights.SetBinContent(j+1,  nPProtonWeights[i][0])
+   templateHist.Write()
+   templateWeights.Write()  
+File.Close()
+
+#print crossSectionStack
+
 
 fig = plt.figure(figNumber)
 plt.hist(onePProtonStack, bins=50, stacked=True, range=protonMomentumRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = onePProtonWeights )
@@ -465,7 +607,7 @@ figNumber = figNumber + 1
 fig = plt.figure(figNumber)
 plt.hist(twoPProtonStack, bins=50, stacked=True, range=protonMomentumRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = twoPProtonWeights )
 plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
-plt.title("Proton Range Momentum (1 mu 2 p)")
+plt.title("Leading Proton Range Momentum (1 mu 2 p)")
 plt.xlabel("Momentum (GeV/c)")
 plt.ylabel("Number of Protons")
 data_proton_hist = dataify(dataProtons.query('track_range_mom_p_count == 2')['track_range_mom_p_max'].to_numpy(), 50, protonMomentumRange)
@@ -478,7 +620,17 @@ plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
 plt.title("Muon Phi Angle")
 plt.xlabel("Angle / pi (radians)")
 plt.ylabel("Number of Primary Muons")
-data_phi_hist = dataify(dataMuonPhi['phi'].to_numpy(), 50, phiRange)
+data_phi_hist = dataify(dataMuons['phi'].to_numpy(), 50, phiRange)
+plt.errorbar(data_phi_hist[0], data_phi_hist[1], yerr=data_phi_hist[2], fmt='o', color='black')
+figNumber = figNumber + 1
+
+fig = plt.figure(figNumber)
+plt.hist(onePPhiStack , bins=50, stacked=True, range=phiRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = onePMuonWeights )
+plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
+plt.title("Muon Phi Angle")
+plt.xlabel("Angle / pi (radians)")
+plt.ylabel("Number of Primary Muons (1 mu 1 p)")
+data_phi_hist = dataify(dataMuons.query('track_range_mom_p_count == 1')['phi'].to_numpy(), 50, phiRange)
 plt.errorbar(data_phi_hist[0], data_phi_hist[1], yerr=data_phi_hist[2], fmt='o', color='black')
 figNumber = figNumber + 1
 
@@ -490,6 +642,26 @@ plt.xlabel("Angle / pi (radians)")
 plt.ylabel("Number of Primary Muons")
 data_proton_phi_hist = dataify(dataProtonPhi['phi'].to_numpy(), 25, phiRange)
 plt.errorbar(data_proton_phi_hist[0], data_proton_phi_hist[1], yerr=data_proton_phi_hist[2], fmt='o', color='black')
+figNumber = figNumber + 1
+
+fig = plt.figure(figNumber)
+plt.hist(muonProtonTheta, bins=25, stacked=True, range=phiRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = muonProtonThetaWeights )
+plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
+plt.title("Muon-Proton Opening Angle")
+plt.xlabel("Cos(theta)")
+plt.ylabel("Number of Muon-Proton Pairs")
+data_opening_angle_hist = dataify(dotProduct(dataProtons.query('track_mcs_mom_count ==1 & isLeadingP==True'), dataMuons.query('track_mcs_mom_count ==1 & track_range_mom_p_count > 0'), "track_mcs_mom", "track_range_mom_p", ["track_dirx", "track_diry", "track_dirz"]), 25, phiRange)
+plt.errorbar(data_opening_angle_hist[0], data_opening_angle_hist[1], yerr=data_opening_angle_hist[2], fmt='o', color='black')
+figNumber = figNumber + 1
+
+fig = plt.figure(figNumber)
+plt.hist(muonProtonPhiDiff, bins=25, stacked=True, range=phiRange, color = ['b', 'g', 'y', 'r', 'grey', 'magenta'], weights = muonProtonThetaWeights )
+plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Ext'])
+plt.title("Muon-Proton Opening Angle")
+plt.xlabel("Cos(theta)")
+plt.ylabel("Number of Muon-Proton Pairs")
+data_phi_diff_hist = dataify(np.absolute(dataMuons.query('track_mcs_mom_count ==1 & track_range_mom_p_count > 0 ')['phi'].to_numpy() - dataProtons.query('track_mcs_mom_count ==1 & isLeadingP==True')['phi'].to_numpy()), 25, phiRange)
+plt.errorbar(data_phi_diff_hist[0], data_phi_diff_hist[1], yerr=data_phi_diff_hist[2], fmt='o', color='black')
 figNumber = figNumber + 1
 
 plt.show()
