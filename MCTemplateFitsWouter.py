@@ -203,7 +203,8 @@ overlayDaughters = uproot.open(InputFiles[0])["NuCCanalyzer"]["Daughters"]
 trackDaughters   = pd.DataFrame(overlayDaughters.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "run", "subrun", "event"] ) )
 filteredEvents   = pd.DataFrame(overlayEvents.arrays(["run", "subrun", "event", "mc_nu_interaction_type", "mc_nu_ccnc", "nu_mu_cc_selected", "mc_nu_lepton_energy", "mc_nu_energy", "mc_nu_lepton_theta"]) )
 
-OverlayScale = dataPOT / (sumPOT*(float(maxEvents)/trackDaughters.shape[0]))
+#OverlayScale = dataPOT / (sumPOT*(float(maxEvents)/trackDaughters.shape[0]))
+OverlayScale = dataPOT / sumPOT
 print "MC POT: %e or %e Overlay Scale: %.3f Ext Scale: %.3f" % (sumPOT, sumPOT*(float(maxEvents)/trackDaughters.shape[0]), OverlayScale, ExtScale)
 print "Total MC POT: %e total MC events: %d" % (mcPOT.sum(), trackDaughters.shape[0])
 
@@ -229,11 +230,13 @@ filteredEvents.insert(filteredEvents.shape[1], "pot", mcPOT)
 #filteredEvents.eval('combined_wgt = wgt*template_wgt', inplace=True)
 
 trackDaughters.insert(trackDaughters.shape[1], "phi", [getPhi(x, y) for x, y in zip(trackDaughters['track_diry'], trackDaughters['track_dirx'] ) ] )
+trackDaughters.insert(trackDaughters.shape[1], "DuplicatedEvent", trackDaughters.duplicated() ) #Tag the events which are duplicated
 
 extWeights              = np.full(filteredExt.shape[0],  ExtScale)
 extTemplateWeights      = np.full(filteredExt.shape[0],  ExtTemplateWeight)
 
 filteredData.insert(filteredData.shape[1], "DuplicatedEvent", filteredData.duplicated() ) #Tag the events which are duplicated
+trackData.insert(trackData.shape[1], "DuplicatedEvent", trackData.duplicated())
 trackData.insert(trackData.shape[1], "phi", [getPhi(x, y) for x, y in zip(trackData['track_diry'], trackData['track_dirx'] ) ] )
 
 filteredExt.insert(filteredExt.shape[1], "DuplicatedEvent", filteredExt.duplicated() ) #Tag the events which are duplicated
@@ -242,6 +245,7 @@ filteredExt.insert(filteredExt.shape[1], "template_wgt", extTemplateWeights )
 filteredExt.eval('combined_wgt = wgt*template_wgt', inplace=True)
 
 trackExt.insert(trackExt.shape[1], "phi", [getPhi(x, y) for x, y in zip(trackExt['track_diry'], trackExt['track_dirx'] ) ] )
+trackExt.insert(trackExt.shape[1], "DuplicatedEvent", trackExt.duplicated())
 
 #Index the events and daugthers by the run, subrun, event tuple
 #This is IMPORTANT. The only infomration we have to connect the two frames a priori is this set of 3 ints
@@ -261,16 +265,40 @@ trackExt       = trackExt.set_index(['run', 'subrun', 'event'])
 
 trackDaughters.sort_index()
 filteredEvents.sort_index()
-trackDaughters = trackDaughters.iloc[:maxEvents]
+
+
+filteredEvents =  filteredEvents[filteredEvents.DuplicatedEvent == False]
+filteredData   =  filteredData[filteredData.DuplicatedEvent == False]
+filteredExt    =  filteredExt[filteredExt.DuplicatedEvent == False]
+trackDaughters =  trackDaughters[trackDaughters.DuplicatedEvent == False]
+trackData      =  trackData[trackData.DuplicatedEvent == False]
+trackExt       =  trackExt[trackExt.DuplicatedEvent == False]
+
+
+#print filteredEvents.loc[(7001, 920, 46044)]
+#raw_input()
+
+#trackDaughters = trackDaughters.iloc[:maxEvents]
+
+#print trackDaughters.loc[(7001, 920, 46044)]['track_is_muon_candidate']
+#print filteredEvents.loc[(7001, 920, 46044)]['DuplicatedEvent']
 
 numberFiltered = 0
+
 
 #create a dict of event info we want to associate with each daughter.
 #by doing this, we have the complete event information for each track.
 #Really what we want is to look at the particles' properties as a funciton of the underlying event information
 #This is extendible to any event varaible we want to associate to a particle
-interactionInfo = {"DuplicatedEvent" : [], "mc_channel" : [], "nu_mu_cc_selected" : [], "mc_Ehad" : [], "mc_expQ2" : [], "mc_expXbj" : [], "mc_expY" : [], "mc_expW" : [], "pot" : [] }
+#interactionInfo = {"DuplicatedEvent" : [], "mc_channel" : [], "nu_mu_cc_selected" : [], "mc_Ehad" : [], "mc_expQ2" : [], "mc_expXbj" : [], "mc_expY" : [], "mc_expW" : [] } 
+# "pot"
+interactionInfo = ("mc_channel", "nu_mu_cc_selected", "mc_Ehad", "mc_expQ2", "mc_expXbj", "mc_expY", "mc_expW") 
+#interactionInfo = ("DuplicatedEvent","mc_channel" ) 
 
+for field in interactionInfo:
+  trackDaughters   = trackDaughters.join(filteredEvents['%s' % field], on=["run", "subrun", "event"])
+
+'''
 for index, row in trackDaughters.iterrows():
     if(numberFiltered % 10000 == 0):
       print "Filtered: %d" % numberFiltered  
@@ -284,10 +312,12 @@ for index, row in trackDaughters.iterrows():
         for itype in interactionInfo:
            interactionInfo[itype].append( filteredEvents.at[index, itype] )
     numberFiltered += 1
+'''
 
+#print trackDaughters.loc[(7001, 920, 46044)]
+raw_input()
 
-
-dataInfo = {"DuplicatedEvent" : [], "nu_mu_cc_selected" : []}
+dataInfo = {"nu_mu_cc_selected" : []}
 
 for index, row in trackData.iterrows():
     
@@ -301,7 +331,7 @@ for index, row in trackData.iterrows():
         for itype in dataInfo:
             dataInfo[itype].append( filteredData.at[index, itype] )
 
-extInfo = {"DuplicatedEvent" : [], "nu_mu_cc_selected" : [], "wgt" : [], "template_wgt" : [], "combined_wgt" : [] }
+extInfo = { "nu_mu_cc_selected" : [], "wgt" : [], "template_wgt" : [], "combined_wgt" : [] }
 
 for index, row in trackExt.iterrows():
     
@@ -320,9 +350,10 @@ protonMomentumRange = (0.0, 1.5)
 phiRange = (-1.5, 1.5)
 
 #associate all the event info with the particles (at last!)
+'''
 for itype in interactionInfo:
    trackDaughters.insert(trackDaughters.shape[1], itype, interactionInfo[itype])
-
+'''
 #sumPOT = trackDaughters['pot'].sum()
 '''
 print trackDaughters['pot']
@@ -351,7 +382,6 @@ print "Selected BNB events failing track score cut: %d" % len(trackData.query('D
 
 protonTracks = trackDaughters.query('DuplicatedEvent == False & nu_mu_cc_selected == True & track_is_muon_candidate == False & track_chi2_proton < @maxProtonChi2 & track_score > @minTrackScore')
 
-
 leadingProtons = protonTracks.groupby(level=["run", "subrun", "event"]).agg({"track_range_mom_p" : ["max", "count"]})
 leadingMuons   = muonTracks.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
 # Using ravel, and a string join, we can create better names for the columns:
@@ -378,6 +408,10 @@ protonTracks.eval('isLeadingP = (track_range_mom_p == track_range_mom_p_max)', i
 muonTracks = muonTracks.join(leadingMuons, on=["run", "subrun", "event"])
 muonTracks.eval('isLeadingMu = (track_mcs_mom == track_mcs_mom_max)', inplace=True)
 
+#print muonTracks.query('mc_channel == "QE" & track_mcs_mom_count > 2')['isLeadingMu']
+print muonTracks.loc[(7001, 920, 46044)]['track_chi2_muon']
+raw_input()
+
 
 muonTracks   = muonTracks.join(leadingProtons, on=["run", "subrun", "event"])
 protonTracks   = protonTracks.join(leadingMuons, on=["run", "subrun", "event"])
@@ -397,8 +431,6 @@ extProtons.eval('isLeadingP = (track_range_mom_p == track_range_mom_p_max)', inp
 extMuons   = extMuons.join(leadingExtMuons, on=["run", "subrun", "event"])
 extMuons   = extMuons.join(leadingExtProtons, on=["run", "subrun", "event"])
 extMuons.eval('isLeadingMu = (track_mcs_mom == track_mcs_mom_max)', inplace=True)
-
-
 
 
 
