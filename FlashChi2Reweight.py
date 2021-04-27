@@ -12,13 +12,6 @@ from mpl_toolkits.mplot3d import Axes3D
 from ROOT import TH1, TAxis, gROOT, TCanvas
 from scipy import stats, optimize
 
-'''
-This code applies a simple linear regression model to the data / simulation ratio of a 
-particular variable used in our event selection: flash chi2.
-The goal of this model is to correct the simulation downstream so it matches our data better.
-'''
-
-
 ####################################################################################################
 channel_or_particle = 'channel'
 
@@ -276,17 +269,17 @@ def Stack(dataframe, dirtDF, extDF, variable, longest = False):
   else:
     print('please enter either channel or particle')
 
-  dirt = dirtDF[variable].to_numpy()
-  ext = extDF[variable].to_numpy()
+  dirt = dirtDF[variable].to_numpy(dtype=float)
+  ext = extDF[variable].to_numpy(dtype=float)
 
   if longest:
     addons = " & isLongestTrack == True"
-    dirt = dirtDF.query('isLongestTrack == True')[variable].to_numpy()
-    ext = extDF.query('isLongestTrack == True')[variable].to_numpy()
+    dirt = dirtDF.query('isLongestTrack == True')[variable].to_numpy(dtype=float)
+    ext = extDF.query('isLongestTrack == True')[variable].to_numpy(dtype=float)
 
   for value in value_list:
       call = '{} == "{}"'.format(q_attribute,value) + addons
-      item = dataframe.query(call)[variable].to_numpy()
+      item = dataframe.query(call)[variable].to_numpy(dtype=float)
       retlist.append(item)
   retlist.append(dirt)
   retlist.append(ext)
@@ -487,6 +480,9 @@ extTriggersC1 = 33630174.0
 extTriggersC2 = 31587147.0
 extTriggers   = extTriggersC1
 maxEvents     = 35000
+
+subtractDirt = False
+subtractExt  = False
 
 '''
 mc_pdg = 14
@@ -837,15 +833,46 @@ binRange = (0, 500.0)
 
 dir_name  = "FittingPlots"
 mcSum = np.full(numberOfBins, 0.0 )
+dirtHist =  np.full(numberOfBins, 0.0 )
+extHist  =  np.full(numberOfBins, 0.0 )
+dirtErr =  np.full(numberOfBins, 0.0 )
+extErr  =  np.full(numberOfBins, 0.0 )
+#print overlayPrimMuonChi2FlashInclusiveStack[:-1]
+it = 0
 for mc, weight in zip(overlayPrimMuonChi2FlashInclusiveStack, overlayPrimMuonWeightInclusiveStack ):
+   #print mc
    mc_hist   = np.histogram(mc, bins=flash_chi2_bins, range=binRange, weights = weight )
-   np.add(mc_hist[0], mcSum, out=mcSum)
+   if(subtractDirt and it == len(overlayPrimMuonChi2FlashInclusiveStack) - 2):
+      dirtHist = mc_hist[0]
+      dirtErr  = np.sqrt(dirtHist)
+      it = it + 1
+      continue
+   elif(subtractExt and it == len(overlayPrimMuonChi2FlashInclusiveStack) - 1):
+      extHist = mc_hist[0]
+      extErr  = np.sqrt(extHist)
+      it = it +1
+      continue
+   else:
+      np.add(mc_hist[0], mcSum, out=mcSum)
+      it = it + 1       
 data_hist = dataify(dataMuonCandidates['nu_flash_chi2'].to_numpy(), flash_chi2_bins, binRange)
 MCScalarSum   = np.sum(mcSum)
-DataScalarSum = np.sum(data_hist[1])
+dataNP = np.array(data_hist[1], dtype=float)
+ratioNoSub = np.divide(dataNP, mcSum)
+if(subtractDirt):
+  np.subtract(dataNP, dirtHist, out=dataNP)
+if(subtractExt):
+  np.subtract(dataNP, extHist,  out=dataNP)
+DataScalarSum = np.sum(dataNP)
 sumRatio = DataScalarSum / MCScalarSum 
-ratio = np.divide(data_hist[1], mcSum)
-err   = np.multiply(ratio, np.divide(1.0, data_hist[2]))
+ratio = np.divide(dataNP, mcSum)
+dataErr = np.array(data_hist[2])
+print dataErr
+np.add(np.square(dataErr), np.square(dirtErr), out=dataErr)
+np.add(dataErr, np.square(extErr), out=dataErr)
+np.sqrt(dataErr, out=dataErr)
+print dataErr
+err   = np.multiply(ratioNoSub, np.divide(1.0, dataErr) )
 np.nan_to_num(ratio, copy=False)
 np.nan_to_num(err, copy=False)
 
@@ -872,8 +899,8 @@ plt.savefig("%s/%s.png" % ( dir_name, filename) )
 plt.close()
 
 dropBins = 5
-print bin_centers
-print bin_centers[:-dropBins]
+#print bin_centers
+#print bin_centers[:-dropBins]
 func, cov = sci.optimize.curve_fit(expDegSix, bin_centers[:-dropBins], ratio[:-dropBins], sigma=err[:-dropBins], absolute_sigma=True)
 
 
@@ -907,7 +934,17 @@ plt.close()
 
 #makeDataMCHistogram(overlayPrimMuonPhiInclusiveStack, overlayIsSelectedInclusiveWeights, dataInclusiveEvents['phi'].to_numpy(), phiRange, 30, "InclusiveEventsPrimMuonPhi", ["Muon Phi Angle", "Angle / pi (radians)", "Number of Primary Muons"])
 
+overlayMuonCandidates.insert(overlayMuonCandidates.shape[1], "flash_wgt", [expDegSix(x, *func) for x in overlayMuonCandidates['nu_flash_chi2']])
+overlayMuonCandidates.eval('wgt = pot_wgt*wgt_tune*wgt_spline*flash_wgt', inplace=True) 
+
+overlayPrimMuonScoreInclusiveStack     = Stack(overlayMuonCandidates, dirtMuonCandidates, extMuonCandidates, "nu_score", True)
+overlayPrimMuonWeightInclusiveStack    = Stack(overlayMuonCandidates, dirtMuonCandidates, extMuonCandidates, "wgt", True)
+
+makeDataMCHistogram(overlayPrimMuonScoreInclusiveStack, overlayPrimMuonWeightInclusiveStack, dataMuonCandidates['nu_score'].to_numpy(), (0.0, 1.0), 50, "InclusiveEventsPrimMuonNuScoreRW", ["Neutrino Score", "Nu Score", "Number of Primary Muons"])
+
 
 #print dataInclusiveEvents.query('nu_mu_cc_selected == False')
+
+print func
 
 sys.exit()

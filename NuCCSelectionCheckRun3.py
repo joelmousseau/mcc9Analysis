@@ -43,19 +43,16 @@ def tagDuplicateEvents(inputFrame):
 def loadMCEventInfo(inputFrame):
   tagDuplicateEvents(inputFrame)
   inputFrame.insert(inputFrame.shape[1], "mc_channel", [getChan(x, y) for x, y in zip(inputFrame['mc_nu_interaction_type'], inputFrame['mc_nu_ccnc'])] ) #Classify neutrino events based on CC / NC and event Type
-  inputFrame.eval('mc_Ehad = mc_nu_energy - mc_nu_lepton_energy', inplace=True) #Insert the true energy transfer (nu)
-  inputFrame.insert(inputFrame.shape[1], "mc_expQ2", [getQ2(x, y, z) for x, y, z in zip(inputFrame['mc_nu_energy'], inputFrame['mc_nu_lepton_energy'], inputFrame['mc_nu_lepton_theta'])] )
-  inputFrame.insert(inputFrame.shape[1], "mc_expW", [getW(x, y, z) for x, y, z in zip(inputFrame['mc_Ehad'], inputFrame['mc_expQ2'], inputFrame['mc_channel'] ) ] )
-  inputFrame.insert(inputFrame.shape[1], "mc_expXbj", [getXbj(x, y) for x, y in zip(inputFrame['mc_Ehad'], inputFrame['mc_expQ2'] ) ] )
-  inputFrame.insert(inputFrame.shape[1], "mc_expY", [getInel(x, y) for x, y in zip(inputFrame['mc_Ehad'], inputFrame['mc_nu_energy'] ) ] )
+  #inputFrame.eval('mc_Ehad = mc_nu_energy - mc_nu_lepton_energy', inplace=True) #Insert the true energy transfer (nu)
+  #inputFrame.insert(inputFrame.shape[1], "mc_expQ2", [getQ2(x, y, z) for x, y, z in zip(inputFrame['mc_nu_energy'], inputFrame['mc_nu_lepton_energy'], inputFrame['mc_nu_lepton_theta'])] )
+  #inputFrame.insert(inputFrame.shape[1], "mc_expW", [getW(x, y, z) for x, y, z in zip(inputFrame['mc_Ehad'], inputFrame['mc_expQ2'], inputFrame['mc_channel'] ) ] )
+  #inputFrame.insert(inputFrame.shape[1], "mc_expXbj", [getXbj(x, y) for x, y in zip(inputFrame['mc_Ehad'], inputFrame['mc_expQ2'] ) ] )
+  #inputFrame.insert(inputFrame.shape[1], "mc_expY", [getInel(x, y) for x, y in zip(inputFrame['mc_Ehad'], inputFrame['mc_nu_energy'] ) ] )
   #inputFrame.insert(inputFrame.shape[1], "template_wgt", [getChanWeight(x, y) for x, y in zip(inputFrame['mc_nu_interaction_type'], inputFrame['mc_nu_ccnc'])] ) #Classify neutrino events based on CC / NC and event Type
-  inputFrame.insert(inputFrame.shape[1], "pot", mcPOT)
+  #inputFrame.insert(inputFrame.shape[1], "pot", mcPOT)
   #inputFrame.insert(inputFrame.shape[1], "isTrueCC", [isTrueCC(x, y) for x, y in zip(inputFrame['mc_pdg'], inputFrame['mc_nu_ccnc'])])
   inputFrame.insert(inputFrame.shape[1], 'flash_wgt', [getFlashWgt(x) for x in inputFrame['nu_flash_chi2'] ])
 
-def loadMCTrackInfo(inputFrame):
-  inputFrame.insert(inputFrame.shape[1], 'particle', [getParticle(x) for x in inputFrame['mc_pdg'] ])
-  inputFrame.insert(inputFrame.shape[1], 'flash_wgt', [getFlashWgt(x) for x in inputFrame['nu_flash_chi2'] ])
 
 def loadTrackInfo(inputFrame, isMC=False):
   inputFrame.insert(inputFrame.shape[1], "DuplicatedEvent", inputFrame.duplicated())
@@ -68,7 +65,7 @@ def loadTrackInfo(inputFrame, isMC=False):
 
 
 def AggregateFrame(inputFrame, var, stat):
-  if stat not in ["count", "max", "mean"]:
+  if stat not in ["count", "max", "mean", "min"]:
     print "Cannot aggregate based on stat %s" % stat
     return
   
@@ -77,9 +74,12 @@ def AggregateFrame(inputFrame, var, stat):
   statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
 
   inputFrame = inputFrame.join(statFrame['%s_%s' % (var, stat)], on=["run", "subrun", "event"])
-  
+
   if(stat == "max"): 
     inputFrame.eval('isMax_%s = (%s == %s_max)' % (var, var, var), inplace=True)
+  if(stat == "min"):
+    inputFrame.eval('isMin_%s = (%s == %s_min)' % (var, var, var), inplace=True)  
+  return inputFrame
 
 
 def makeMCHistogram(mc, channel, binRange, nBins, filename, Titles):
@@ -141,8 +141,16 @@ def makeDataMCHistogram(mcList, mcWeights, dataList, binRange, nBins, filename, 
     xLimits.insert(0, 0.0)
   if(len(yLimits) == 1):
     yLimits.insert(0, 0.0)
+  '''
+  print (mcList)
+  raw_input()
+  print (mcWeights)
+  raw_input()
+  '''
+  #out = plt.hist(mcList, bins=nBins, stacked=True, range=binRange, weights = mcWeights )
 
-  plt.hist(mcList, bins=nBins, stacked=True, range=binRange, color = ['b', 'g', 'y', 'r', 'grey', 'gold', 'magenta'], weights = mcWeights )
+  out = plt.hist(mcList, bins=nBins, stacked=True, range=binRange, color = ['b', 'g', 'y', 'r', 'grey', 'gold', 'magenta'], weights = mcWeights )
+
   plt.legend(['QE', 'RES', 'DIS', '2p2h', 'NC / Other', 'Dirt', 'Ext'])
 
   #plotTitle, xAxisTitle, yAxisTitle =  Titles
@@ -267,6 +275,8 @@ def getChan(interaction, isNC):
       return "DIS"
     elif(interaction == 10):
       return "2p2h"
+    else:
+      return "Unkown"  
 
 def getParticle(pdg):
     if (pdg == 13):
@@ -389,20 +399,26 @@ def getFlashWgt(x):
 
 def expDegSix(x):
    p = [ 1.99384917e-01, -1.05022405e-10,  6.34916308e-05, -3.44705817e-03,
-  7.32059307e-02, -5.91696006e-01,  2.14667463e+00, -1.02545380e+00,
-  3.65915734e-01]
+         7.32059307e-02, -5.91696006e-01,  2.14667463e+00, -1.02545380e+00,
+         3.65915734e-01]
    return(np.exp(-p[0]*x)*(p[1]*pow(x, 6) + p[2]*pow(x,5) + p[3]*pow(x,4) + p[4]*pow(x,3) + p[5]*pow(x,2) + p[6]*x + p[7]) + p[8])  
 
-InputFiles = ["/uboone/data/users/joelam/stv-ntuples-new/numu_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/bnb_5e19_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/extC1_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/dirt_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/extC2_run1.root"]
+def tagCorrectSlice(nFlashes, isMinFlash, isMinNu):
+   #If there is one flash == min, use the min flash score
+   #otherwise use the min nu score
+   return(isMinNu if nFlashes > 1 else isMinFlash )
+   #return(nFlashes > 1 ? isMinFlash : isMinNu)
+
+#InputFiles = ["/uboone/data/users/joelam/stv-ntuples-new/numu_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/bnb_5e19_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/extC1_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/dirt_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/extC2_run1.root"]
 
 #InputFiles = ["/uboone/data/users/ametzler/DetVarNtuples/prodgenie_bnb_nu_overlay_DetVar_LYAttenuation.root", "/uboone/data/users/joelam/stv-ntuples-new/bnb_5e19_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/extC1_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/dirt_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/extC2_run1.root"]
 
 
-#InputFiles = ["/uboone/data/users/joelam/stv-ntuples-new/numu_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/nucc_run1_bnb.root", "/uboone/data/users/joelam/stv-ntuples-new/extC1_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/dirt_run1.root", "/uboone/data/users/joelam/stv-ntuples-new/extC2_run1.root"]
+InputFiles = ["/uboone/data/users/joelam/stv-ntuples-new/numu_run3.root", "/uboone/data/users/joelam/stv-ntuples-new/bnb_1e19_run3.root", "/uboone/data/users/joelam/stv-ntuples-new/extG1_run3.root", "/uboone/data/users/joelam/stv-ntuples-new/dirt_run3.root"]
 
 
 #OverlayScale  = 1.0
-ExtScale     = 0.97
+#ExtScale     = 0.97
 numMCTemplates = 6
 empty = []
 
@@ -421,58 +437,41 @@ numupdg = 14
 #Python library to read in ROOT ntuples files.
 overlayEvents = uproot.open(InputFiles[0])["NuCCanalyzer"]["Event"]
 bnbEvents     = uproot.open(InputFiles[1])["NuCCanalyzer"]["Event"]
-extEventsC1    = uproot.open(InputFiles[2])["NuCCanalyzer"]["Event"]
-extEventsC2   = uproot.open(InputFiles[4])["NuCCanalyzer"]["Event"]
+extEventsG1    = uproot.open(InputFiles[2])["NuCCanalyzer"]["Event"]
 dirtEvents    = uproot.open(InputFiles[3])["NuCCanalyzer"]["Event"]
 
 overlayPOT    = uproot.open(InputFiles[0])["NuCCanalyzer"]["subruns"]
 dirtPOT       = uproot.open(InputFiles[3])["NuCCanalyzer"]["subruns"]
 
+#dataPOT            = 9.534e+18
+dataPOT           = 4.988e+18
+bnbSpills         = 1193929.0                   
+#bnbSpills          = 2299517.0
+#extTriggers     = 137052818.0
+extTriggers      = 73285067.0
+
 #Scale factors, because we generate more simulation than data. We also do not take an equal ammount of on and off beam data (though it is close)
-mcPOT         = pd.Series(overlayPOT.array("pot"))
-sumPOT        = mcPOT.sum()
-
+mcPOT         = pd.DataFrame(overlayPOT.arrays(["run", "subRun", "pot"] ) )
+mcPOT.insert(mcPOT.shape[1], "DuplicatedEvent", mcPOT.duplicated() )
+mcPOT = mcPOT[mcPOT.DuplicatedEvent == False]
+sumPOT        = mcPOT['pot'].sum()
 sumDirtPOT    = (pd.Series(dirtPOT.array("pot"))).sum()
-
-
-useC2 = True
-weightSeperately = False
-#dataPOT       = 4.418e+19
-dataPOT       = 4.08e+19
-#dataPOT       = 1.469e+20 
-bnbSpills     = 9045263.0
-#bnbSpills     = 10408266.0
-#bnbSpills     = 33837051.0  
-extTriggersC1 = 33630174.0
-extTriggersC2 = 31587147.0
-extTriggers   = extTriggersC1
-maxEvents     = 35000
-
-'''
-mc_pdg = 14
-cc_nc = 0
-'''
-
-
-ExtTemplateWeight = (1.0 + 1.00000e-02)
 
 #Create frames of the event tree (which has information about the interaction) and the duaghters tree (which has information about the particles within the interaction).
 #Do this for "overlay" simulation, beam data, and off-beam data
+#with uproot.open(InputFiles[0])["NuCCanalyzer"]["Event"] as overlayEvents:
+filteredEvents   = pd.DataFrame(overlayEvents.arrays(["run", "subrun", "event", "mc_nu_interaction_type", "nu_score", "nu_flash_chi2", "obvious_cosmic_chi2", "nu_pdg", "daughters_start_contained", "nu_vx", "nu_vy", "nu_vz", "mc_nu_ccnc", "nu_mu_cc_selected", "mc_nu_lepton_energy", "mc_nu_energy", "mc_nu_lepton_theta"]) )
+
 overlayDaughters = uproot.open(InputFiles[0])["NuCCanalyzer"]["Daughters"]
 trackOverlay   = pd.DataFrame(overlayDaughters.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "vx", "vy", "vz", "track_endx", "track_endy", "track_endz", "track_length", "vtx_distance", "generation", "mc_pdg", "run", "subrun", "event"] ) )
-filteredEvents   = pd.DataFrame(overlayEvents.arrays(["run", "subrun", "event", "mc_nu_interaction_type", "nu_score", "nu_flash_chi2", "obvious_cosmic_chi2", "nu_pdg", "daughters_start_contained", "nu_vx", "nu_vy", "nu_vz", "mc_nu_ccnc", "nu_mu_cc_selected", "mc_nu_lepton_energy", "mc_nu_energy", "mc_nu_lepton_theta"]) )
 filteredEvents.insert(filteredEvents.shape[1], "isFiducial", [isFiducial(x, y, z) for x, y, z in zip(filteredEvents['nu_vx'], filteredEvents['nu_vy'], filteredEvents['nu_vz'])] )
 filteredEvents.eval('flash_chi2_ratio = nu_flash_chi2 / obvious_cosmic_chi2', inplace=True)
 
-overlayCVWeights = pd.read_csv("/uboone/data/users/joelam/MCWeights/AllBNBWeights.csv", names=["run", "subrun", "event", "wgt_tune"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_tune" : float})
-#overlayCVWeights = pd.read_csv("/uboone/data/users/joelam/MCWeights/LYAttenCVWeights.csv", names=["run", "subrun", "event", "wgt_tune"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_tune" : float})
+overlayCVWeights = pd.read_csv("/uboone/data/users/joelam/MCWeights/Run3TuneWeights.csv", names=["run", "subrun", "event", "wgt_tune"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_tune" : float})
+dirtCVWeights    = pd.read_csv("/uboone/data/users/joelam/MCWeights/DirtRun3CVWeights.csv", names=["run", "subrun", "event", "wgt_tune"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_tune" : float})
 
-dirtCVWeights    = pd.read_csv("/uboone/data/users/joelam/MCWeights/DirtSplineWeights.csv", names=["run", "subrun", "event", "wgt_tune"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_tune" : float})
-#overlaySplineWeights = pd.read_csv("/uboone/data/users/joelam/MCWeights/LYAttenSplineWeights.csv", names=["run", "subrun", "event", "wgt_spline"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_spline" : float})
-overlaySplineWeights = pd.read_csv("/uboone/data/users/joelam/MCWeights/BNBSplineWeights.csv", names=["run", "subrun", "event", "wgt_spline"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_spline" : float})
-dirtSplineWeights    = pd.read_csv("/uboone/data/users/joelam/MCWeights/DirtWeights1.csv", names=["run", "subrun", "event", "wgt_spline"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_spline" : float})
-
-#OverlayScale = dataPOT / (sumPOT*(float(maxEvents)/trackOverlay.shape[0]))
+overlaySplineWeights = pd.read_csv("/uboone/data/users/joelam/MCWeights/Run3SplineWeights.csv", names=["run", "subrun", "event", "wgt_spline"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_spline" : float})
+dirtSplineWeights    = pd.read_csv("/uboone/data/users/joelam/MCWeights/DirtRun3SplineWeights.csv", names=["run", "subrun", "event", "wgt_spline"], dtype={"run" : int, "subrun" : int, "event" : int, "wgt_spline" : float})
 
 overlayCVWeights.insert(overlayCVWeights.shape[1], "DuplicatedEvent", overlayCVWeights.duplicated() ) #Tag the events which are duplicated
 overlayCVWeights.replace([np.inf], 0.0, inplace=True)
@@ -492,23 +491,12 @@ filteredData  = pd.DataFrame(bnbEvents.arrays(["run", "subrun", "event", "nu_mu_
 filteredData.insert(filteredData.shape[1], "isFiducial", [isFiducial(x, y, z) for x, y, z in zip(filteredData['nu_vx'], filteredData['nu_vy'], filteredData['nu_vz'])] )
 filteredData.eval('flash_chi2_ratio = nu_flash_chi2 / obvious_cosmic_chi2', inplace=True)
 
-extDaughtersC1 = uproot.open(InputFiles[2])["NuCCanalyzer"]["Daughters"]
-trackExtC1     = pd.DataFrame(extDaughtersC1.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "track_dirx", "track_diry", "track_dirz", "vx", "vy", "vz", "track_endx", "track_endy", "track_endz", "track_length", "vtx_distance", "is_track_daughter", "generation", "run", "subrun", "event"] ) )
-filteredExtC1  = pd.DataFrame(extEventsC1.arrays(["run", "subrun", "event", "nu_mu_cc_selected", "nu_score", "nu_flash_chi2", "obvious_cosmic_chi2", "daughters_start_contained", "nu_vx", "nu_vy", "nu_vz", "nu_pdg"]) )
-filteredExtC1.insert(filteredExtC1.shape[1], "isFiducial", [isFiducial(x, y, z) for x, y, z in zip(filteredExtC1['nu_vx'], filteredExtC1['nu_vy'], filteredExtC1['nu_vz'])] )
-filteredExtC1.eval('flash_chi2_ratio = nu_flash_chi2 / obvious_cosmic_chi2', inplace=True)
-
-if(weightSeperately):
-  filteredExtC1.insert(filteredExtC1.shape[1], "wgt", (bnbSpills / (2*extTriggers) ) )
-
-extDaughtersC2 = uproot.open(InputFiles[4])["NuCCanalyzer"]["Daughters"]
-trackExtC2     = pd.DataFrame(extDaughtersC2.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "track_dirx", "track_diry", "track_dirz", "vx", "vy", "vz", "track_endx", "track_endy", "track_endz", "track_length", "vtx_distance", "is_track_daughter", "generation", "run", "subrun", "event"] ) )
-filteredExtC2  = pd.DataFrame(extEventsC2.arrays(["run", "subrun", "event", "nu_mu_cc_selected", "nu_score", "nu_flash_chi2", "obvious_cosmic_chi2", "daughters_start_contained", "nu_vx", "nu_vy", "nu_vz", "nu_pdg"]) )
-filteredExtC2.insert(filteredExtC2.shape[1], "isFiducial", [isFiducial(x, y, z) for x, y, z in zip(filteredExtC2['nu_vx'], filteredExtC2['nu_vy'], filteredExtC2['nu_vz'])] )
-filteredExtC2.eval('flash_chi2_ratio = nu_flash_chi2 / obvious_cosmic_chi2', inplace=True)
-
-if(weightSeperately):
-   filteredExtC2.insert(filteredExtC2.shape[1], "wgt", (bnbSpills / (2*extTriggersC2) ) )
+extDaughtersG1 = uproot.open(InputFiles[2])["NuCCanalyzer"]["Daughters"]
+trackExtG1     = pd.DataFrame(extDaughtersG1.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "track_dirx", "track_diry", "track_dirz", "vx", "vy", "vz", "track_endx", "track_endy", "track_endz", "track_length", "vtx_distance", "is_track_daughter", "generation", "run", "subrun", "event"] ) )
+filteredExtG1  = pd.DataFrame(extEventsG1.arrays(["run", "subrun", "event", "nu_mu_cc_selected", "nu_score", "nu_flash_chi2", "obvious_cosmic_chi2", "daughters_start_contained", "nu_vx", "nu_vy", "nu_vz", "nu_pdg"]) )
+filteredExtG1.insert(filteredExtG1.shape[1], "isFiducial", [isFiducial(x, y, z) for x, y, z in zip(filteredExtG1['nu_vx'], filteredExtG1['nu_vy'], filteredExtG1['nu_vz'])] )
+filteredExtG1.eval('flash_chi2_ratio = nu_flash_chi2 / obvious_cosmic_chi2', inplace=True)
+filteredExtG1.insert(filteredExtG1.shape[1], "wgt", (bnbSpills / (extTriggers) ) )
 
 dirtDaughters = uproot.open(InputFiles[3])["NuCCanalyzer"]["Daughters"]
 trackDirt     = pd.DataFrame(dirtDaughters.arrays(["track_range_mom_mu", "track_mcs_mom", "track_range_mom_p", "track_is_muon_candidate", "track_score", "track_chi2_proton", "track_chi2_muon", "track_dirx", "track_diry", "track_dirz", "track_dirx", "track_diry", "track_dirz", "vx", "vy", "vz", "track_endx", "track_endy", "track_endz", "track_length", "vtx_distance", "is_track_daughter", "generation", "run", "subrun", "event"] ) )
@@ -516,17 +504,8 @@ filteredDirt  = pd.DataFrame(dirtEvents.arrays(["run", "subrun", "event", "nu_mu
 filteredDirt.insert(filteredDirt.shape[1], "isFiducial", [isFiducial(x, y, z) for x, y, z in zip(filteredDirt['nu_vx'], filteredDirt['nu_vy'], filteredDirt['nu_vz'])] )
 filteredDirt.eval('flash_chi2_ratio = nu_flash_chi2 / obvious_cosmic_chi2', inplace=True)
 
-
-if(useC2):
-  filteredExt = pd.concat([filteredExtC1, filteredExtC2])
-  trackExt    = pd.concat([trackExtC1, trackExtC2])
-  extTriggers = extTriggers + extTriggersC2
-
-else:
-  filteredExt = filteredExtC1
-  trackExt    = trackExtC1
-
-
+filteredExt = filteredExtG1
+trackExt    = trackExtG1
 
 #Here, we calculate some additional event information that isn't part of the input ROOT ntuple
 #This is because the grad. student who created the files didn't include this information
@@ -536,45 +515,31 @@ loadTrackInfo(trackOverlay, True)
 tagDuplicateEvents(filteredDirt)
 loadTrackInfo(trackDirt)
 
-#SAVE THIS
-#print trackOverlay.loc[:100,['isContained', 'track_range_mom_mu', 'track_mcs_mom', 'track_mom_best']]
-
 tagDuplicateEvents(filteredExt)
-
-if not weightSeperately:
-  ExtScale     = bnbSpills / extTriggers
-  extWeights              = np.full(filteredExt.shape[0],  ExtScale)
-  extTemplateWeights      = np.full(filteredExt.shape[0],  ExtTemplateWeight)
-  filteredExt.insert(filteredExt.shape[1], "wgt", extWeights )
+loadTrackInfo(trackExt)
 
 tagDuplicateEvents(filteredData)
 loadTrackInfo(trackData)
-
-loadTrackInfo(trackExt)
 
 dataRuns = trackExt[['run', 'subrun']]
 dataRuns.insert(dataRuns.shape[1], "DuplicatedEvent", dataRuns.duplicated() ) 
 
 dataRuns   =  dataRuns[dataRuns.DuplicatedEvent == False]
-dataRuns[['run', 'subrun']].to_csv("ExtRuns1.txt", sep=" ", header=False, index_label=False, index=False) 
+dataRuns[['run', 'subrun']].to_csv("ExtRuns.txt", sep=" ", header=False, index_label=False, index=False) 
 
 dataRuns = trackData[['run', 'subrun']]
 dataRuns.insert(dataRuns.shape[1], "DuplicatedEvent", dataRuns.duplicated() ) 
 
 dataRuns   =  dataRuns[dataRuns.DuplicatedEvent == False]
-dataRuns[['run', 'subrun']].to_csv("OnBeamRuns1.txt", sep=" ", header=False, index_label=False, index=False) 
+dataRuns[['run', 'subrun']].to_csv("OnBeamRuns.txt", sep=" ", header=False, index_label=False, index=False) 
 
-OverlayScale = dataPOT / sumPOT
-DirtScale    = dataPOT / sumDirtPOT
-print "MC POT: %e or %e Overlay Scale: %.3f Ext Scale: %.3f Dirt Scale: %.3f" % (sumPOT, sumPOT*(float(maxEvents)/trackOverlay.shape[0]), OverlayScale, ExtScale, DirtScale)
-print "Total MC POT: %e total MC events: %d" % (mcPOT.sum(), trackOverlay.shape[0])
-print "Total Dirt POT: %e" % sumDirtPOT
+#trackOverlay   = trackOverlay.query('run < @maxOverlayRun')
+#filteredEvents = filteredEvents.query('run < @maxOverlayRun')
 
 #Index the events and daugthers by the run, subrun, event tuple
 #This is IMPORTANT. The only infomration we have to connect the two frames a priori is this set of 3 ints
 #A single event can have multiple tracks (and often does!)
 #Multiindexing makes our life much easier, cuz we can grab the event info for ANY track from it's multiindex
-
 trackOverlay   =  trackOverlay.set_index(['run', 'subrun', 'event'])
 filteredEvents =  filteredEvents.set_index(['run', 'subrun', 'event'])
 
@@ -587,17 +552,13 @@ trackExt       = trackExt.set_index(['run', 'subrun', 'event'])
 filteredDirt    = filteredDirt.set_index(['run', 'subrun', 'event'])
 trackDirt       = trackDirt.set_index(['run', 'subrun', 'event'])
 
+#overlayCVWeights = overlayCVWeights.query('run < @maxOverlayRun')
 overlayCVWeights = overlayCVWeights.set_index(['run', 'subrun', 'event'])
 dirtCVWeights    = dirtCVWeights.set_index(['run', 'subrun', 'event'])
 
+#overlaySplineWeights = overlaySplineWeights.query('run < @maxOverlayRun')
 overlaySplineWeights = overlaySplineWeights.set_index(['run', 'subrun', 'event'])
 dirtSplineWeights    = dirtSplineWeights.set_index(['run', 'subrun', 'event'])
-
-#Do this to make our loops and lookups a bit more efficienct
-
-trackOverlay.sort_index()
-filteredEvents.sort_index()
-
 
 filteredEvents   =  filteredEvents[filteredEvents.DuplicatedEvent == False]
 filteredData     =  filteredData[filteredData.DuplicatedEvent == False]
@@ -609,39 +570,57 @@ trackData        =  trackData[trackData.DuplicatedEvent == False]
 trackExt         =  trackExt[trackExt.DuplicatedEvent == False]
 trackDirt        =  trackDirt[trackDirt.DuplicatedEvent == False]
 
-
 overlayCVWeights =  overlayCVWeights[overlayCVWeights.DuplicatedEvent == False]
 dirtCVWeights    =  dirtCVWeights[dirtCVWeights.DuplicatedEvent == False]
 overlaySplineWeights =  overlaySplineWeights[overlaySplineWeights.DuplicatedEvent == False]
 dirtSplineWeights    =  dirtSplineWeights[dirtSplineWeights.DuplicatedEvent == False]
 
-
-
-numberFiltered = 0
-
+OverlayScale = dataPOT / sumPOT
+DirtScale    = dataPOT / sumDirtPOT
+print "MC POT: %e Data POT: %e Overlay Scale: %.3f Ext Scale: %.3f Dirt Scale: %.3f" % (sumPOT, dataPOT, OverlayScale, (bnbSpills / extTriggers), DirtScale)
+print "Total MC POT: %e total MC events: %d" % (sumPOT, trackOverlay.shape[0])
+print "Total Dirt POT: %e" % sumDirtPOT
 
 #create a dict of event info we want to associate with each daughter.
 #by doing this, we have the complete event information for each track.
 #Really what we want is to look at the particles' properties as a funciton of the underlying event information
 #This is extendible to any event varaible we want to associate to a particle
-interactionInfo = ("mc_channel", "nu_mu_cc_selected","nu_score", "nu_pdg", "nu_flash_chi2", "obvious_cosmic_chi2", "flash_chi2_ratio", "nu_vx", "nu_vy", "nu_vz", "daughters_start_contained", "isFiducial", "mc_Ehad", "mc_expQ2", "mc_expXbj", "mc_expY", "mc_expW", "flash_wgt") 
+interactionInfo = ("mc_channel", "nu_mu_cc_selected","nu_score", "nu_pdg", "nu_flash_chi2", "obvious_cosmic_chi2", "flash_chi2_ratio", "nu_vx", "nu_vy", "nu_vz", "daughters_start_contained", "isFiducial", "flash_wgt") 
+
+filteredEvents = AggregateFrame(filteredEvents, "nu_flash_chi2", "min")
+filteredEvents = AggregateFrame(filteredEvents, "nu_score", "min")
+
+#filteredEvents.eval('isCorrectSlice = (isMin_nu_score & isMin_nu_flash_chi2)', inplace=True)
+#grouped = filteredEvents.query('isCorrectSlice == False').groupby(level=["run", "subrun", "event"]).agg( {"isMin_nu_score": "count"} )
+
+grouped = filteredEvents.query('nu_flash_chi2 == nu_flash_chi2_min').groupby(level=["run", "subrun", "event"])
+eventsFailed = grouped.size().to_frame(name='nu_flash_chi2_min_count') #How many tracks per event pass the min nu flash cut? This would be we have 2 flashes with an equal chi2
+filteredEvents = filteredEvents.join(eventsFailed, on=["run", "subrun", "event"])
+filteredEvents.insert(filteredEvents.shape[1], 'isCorrectSlice', [tagCorrectSlice(x, y, z) for x, y, z in zip(filteredEvents['nu_flash_chi2_min_count'], filteredEvents['isMin_nu_flash_chi2'], filteredEvents['isMin_nu_score'])])
+
+filteredEvents = filteredEvents[filteredEvents.isCorrectSlice == True]
 
 for field in interactionInfo:
   trackOverlay   = trackOverlay.join(filteredEvents['%s' % field], on=["run", "subrun", "event"])
+  #nan = trackOverlay[['mc_channel', 'phi']]
+  #print(nan[nan.isna().any(axis=1)])
+  #raw_input() 
+
 
 trackOverlay = trackOverlay.join(overlayCVWeights['wgt_tune'], on=["run", "subrun", "event"])
 trackOverlay = trackOverlay.join(overlaySplineWeights['wgt_spline'], on=["run", "subrun", "event"])
-#trackOverlay = trackOverlay.join(overlaySplineWeights['flash_wgt'], on=["run", "subrun", "event"])
 
 extInfo = { "nu_mu_cc_selected", "nu_score", "nu_pdg", "nu_flash_chi2", "obvious_cosmic_chi2", "flash_chi2_ratio", "nu_vx", "nu_vy", "nu_vz", "daughters_start_contained", "isFiducial", "wgt" }
 
 for field in extInfo:
   trackExt   = trackExt.join(filteredExt['%s' % field], on=["run", "subrun", "event"])
+  
 
 dirtInfo = ("nu_mu_cc_selected", "nu_score", "nu_flash_chi2", "obvious_cosmic_chi2", "flash_chi2_ratio", "nu_vx", "nu_vy", "nu_vz", "daughters_start_contained", "isFiducial", "nu_pdg")
 
 for field in dirtInfo:
   trackDirt = trackDirt.join(filteredDirt['%s' % field], on=["run", "subrun", "event"])
+
 
 
 weightsPreAverage = dirtCVWeights['wgt_tune'].to_numpy()
@@ -664,9 +643,9 @@ dirtCVWeightMeans     = dirtCVWeights.groupby(level=["run", "subrun", "event"]).
 dirtSplineWeightMeans = dirtSplineWeights.groupby(level=["run", "subrun", "event"]).agg({"wgt_spline" : ["mean"]})
 
 dirtCVWeightMeans.columns = ["_".join(x) for x in dirtCVWeightMeans.columns.ravel()]
-dirtCVWeightMeans.rename(columns={"wgt_tune_mean" : "wgt_tune"}, inplace=True)
+dirtSplineWeightMeans.columns = ["_".join(x) for x in dirtSplineWeightMeans.columns.ravel()]
 
-weightsPostAverage = dirtCVWeightMeans['wgt_tune'].to_numpy()
+weightsPostAverage = dirtCVWeightMeans['wgt_tune_mean'].to_numpy()
 weightsPostAverageRMS = np.nanstd(weightsPostAverage)
 
 plt.hist(weightsPostAverage, bins=150, stacked=False, range=(0.8, 1.4), color = 'black')
@@ -682,23 +661,18 @@ plt.ticklabel_format(axis="y",style="sci", scilimits=(0, 4))
 plt.savefig("PlotDir/DirtWeightsPostAverage.png")
 plt.close()  
 
-dirtSplineWeightMeans.columns = ["_".join(x) for x in dirtSplineWeightMeans.columns.ravel()]
-dirtSplineWeightMeans.rename(columns={"wgt_spline_mean" : "wgt_spline"}, inplace=True)
-
-
-
-#SAVE THIS
-#print dirtCVWeights.at[(6553, 129, 6458), 'wgt_tune']
-
 for field in dirtInfo:
+  print ("Number of data tracks: %d" % len(trackData.index ) )
   trackData  = trackData.join(filteredData['%s' % field], on=["run", "subrun", "event"])
+  
 
-trackDirt = trackDirt.join(dirtCVWeightMeans['wgt_tune'], on=["run", "subrun", "event"])
-trackDirt = trackDirt.join(dirtSplineWeightMeans['wgt_spline'], on=["run", "subrun", "event"])
+trackDirt = trackDirt.join(dirtCVWeightMeans['wgt_tune_mean'], on=["run", "subrun", "event"])
+trackDirt = trackDirt.join(dirtSplineWeightMeans['wgt_spline_mean'], on=["run", "subrun", "event"])
+
 
 muonMomentumRange   = (0.0, 2.0)
 protonMomentumRange = (0.0, 1.5)
-phiRange = (-1.0, 1.0)
+phiRange = (-1.1, 1.1)
 isSelectedRange = (0.0, 1.0)
 phiDiffRange = (0.0, 2.0)
 trkScoreRange= (0.0, 1.0)
@@ -711,53 +685,49 @@ pdgRange     = (0, 30)
 
 
 overlayWeights = np.full(trackOverlay.shape[0], OverlayScale )
-dirtWeights    = np.full(trackDirt.shape[0], DirtScale )
 
+dirtWeights    = np.full(trackDirt.shape[0], DirtScale )
 
 trackOverlay.insert(trackOverlay.shape[1], "pot_wgt", overlayWeights )
 trackOverlay.eval('wgt = pot_wgt*wgt_tune*wgt_spline', inplace=True)
 trackOverlay.eval('wgt_opt = pot_wgt*wgt_tune*wgt_spline*flash_wgt', inplace=True)  
 
 trackDirt.insert(trackDirt.shape[1], "pot_wgt", dirtWeights )
-trackDirt.eval('wgt = pot_wgt*wgt_tune*wgt_spline', inplace=True)
-trackDirt.eval('wgt_opt = pot_wgt*wgt_tune*wgt_spline', inplace=True)
+trackDirt.eval('wgt = pot_wgt*wgt_tune_mean*wgt_spline_mean', inplace=True)
+trackDirt.eval('wgt_opt = pot_wgt*wgt_tune_mean*wgt_spline_mean', inplace=True)
 
-overlaySliceScoreStack = '''[trackOverlay.query('mc_channel == "QE"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "RES"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "DIS"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "2p2h"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "NC / Other"')['VAR'].to_numpy(), trackDirt['VAR'].to_numpy(), trackExt['VAR'].to_numpy()]'''
+trackOverlay.fillna({'track_chi2_ratio' : 0}, inplace=True)
+#trackOverlay = trackOverlay[10:]
+
+overlaySliceScoreStack = '''[trackOverlay.query('mc_channel == "QE"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "RES"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "DIS"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "2p2h"')['VAR'].to_numpy(), trackOverlay.query('mc_channel == "NC / Other" | mc_channel == "Unkown"')['VAR'].to_numpy(), trackDirt['VAR'].to_numpy(), trackExt['VAR'].to_numpy()]'''
 exec( "incSliceScoreStack   = "  + re.sub(r'VAR', 'nu_score', overlaySliceScoreStack) )
+exec( "incMuonPhiStack      = "  + re.sub(r'VAR', 'phi', overlaySliceScoreStack) )
 exec( "incSliceScorekWeights     = "  + re.sub(r'VAR', 'wgt',    overlaySliceScoreStack) )
+'''
+print(incMuonPhiStack[4:7])
+raw_input()
 
+print(incSliceScorekWeights[4:7])
+raw_input()
+'''
 #makeDataMCHistogram(incSliceScoreStack, incSliceScorekWeights, trackData['nu_score'].to_numpy(), trkScoreRange, 25, "IncSliceScore", ["Slice Score", "Score", "Number of Daughters"])
+makeDataMCHistogram(incMuonPhiStack,    incSliceScorekWeights, trackData['phi'].to_numpy(), phiRange, 25, "IncMuonPhi", ["Muon Phi Angle", "Angle / pi (radians)", "Number of Daughters"])
 
 exec( "incIsSelectedStack   = "  + re.sub(r'VAR', 'nu_mu_cc_selected', overlaySliceScoreStack) )
-#exec( "incSliceScorekWeights     = "  + re.sub(r'VAR', 'wgt',    overlaySliceScoreStack) )
 
-#makeDataMCHistogram(incIsSelectedStack, incSliceScorekWeights, trackData['nu_mu_cc_selected'].to_numpy(), isSelectedRange, 2, "IncIsSelected", ["Selected", "Selected", "Number of Daughters"])
+makeDataMCHistogram(incIsSelectedStack, incSliceScorekWeights, trackData['nu_mu_cc_selected'].to_numpy(), isSelectedRange, 2, "IncIsSelected", ["Selected", "Selected", "Number of Daughters"])
 
-
-#extNuScore     = trackExt.query('DuplicatedEvent == False & nu_score > @minNeutrinoScore  & nu_pdg == @numupdg')
 extNuScore     = trackExt.query('DuplicatedEvent == False')
 dirtNuScore    = trackDirt.query('DuplicatedEvent == False')
 overlayNuScore = trackOverlay.query('DuplicatedEvent == False')
 dataNuScore    = trackData.query('DuplicatedEvent == False')
 
-grouped = trackOverlay.groupby(level=["run", "subrun", "event"])
-isSignal = grouped['particle'].agg(lambda x : "muon" in x.to_list() and "pi0" in x.to_list() and not "pip" in x.to_list() )
-isSignal.rename("isPi0Signal", inplace=True)
-
-trackOverlay = trackOverlay.join(isSignal, on=["run", "subrun", "event"])
-print trackOverlay.query('isPi0Signal == True')
-raw_input()
-'''
-for name, group in grouped:
-  print name
-  print group
-'''
 overlayTrackScoreStack = '''[overlayNuScore.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayNuScore.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayNuScore.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayNuScore.query('mc_channel == "2p2h"')['VAR'].to_numpy(), overlayNuScore.query('mc_channel == "NC / Other"')['VAR'].to_numpy(), dirtNuScore['VAR'].to_numpy(), extNuScore['VAR'].to_numpy()]'''
 
 exec( "incTrkScoreStack   = "  + re.sub(r'VAR', 'track_score', overlayTrackScoreStack) )
 exec( "incTrkScorekWeights     = "  + re.sub(r'VAR', 'wgt',    overlayTrackScoreStack) )
 
-#makeDataMCHistogram(incTrkScoreStack, incTrkScorekWeights, dataNuScore['track_score'].to_numpy(), trkScoreRange, 25, "IncTrkScore", ["Track Score", "Score", "Number of Tracks"])
+makeDataMCHistogram(incTrkScoreStack, incTrkScorekWeights, dataNuScore['track_score'].to_numpy(), trkScoreRange, 25, "IncTrkScore", ["Track Score", "Score", "Number of Tracks"])
 
 
 extTrackScore     = trackExt.query('DuplicatedEvent == False & track_score > @minTrackScore')
@@ -788,7 +758,7 @@ overlayPIDStack = '''[overlayPIDScore.query('mc_channel == "QE"')['VAR'].to_nump
 exec( "incChiSqrStack   = "  + re.sub(r'VAR', 'track_chi2_muon', overlayPIDStack) )
 exec( "incChiSqrStackWeights     = "  + re.sub(r'VAR', 'wgt',    overlayPIDStack) )
 
-#makeDataMCHistogram(incChiSqrStack, incChiSqrStackWeights, dataPIDScore['track_chi2_muon'].to_numpy(), chi2Range, 50, "IncChi2Muon", ["Chi2 Muon", "Chi2", "Number of Tracks"])
+makeDataMCHistogram(incChiSqrStack, incChiSqrStackWeights, dataPIDScore['track_chi2_muon'].to_numpy(), chi2Range, 50, "IncChi2Muon", ["Chi2 Muon", "Chi2", "Number of Tracks"])
 
 exec( "incChiSqrPStack   = "  + re.sub(r'VAR', 'track_chi2_proton', overlayPIDStack) )
 exec( "incChiSqrPStackWeights     = "  + re.sub(r'VAR', 'wgt',      overlayPIDStack) )
@@ -803,66 +773,45 @@ makeDataMCHistogram(incChiSqrPMuStack, incChiSqrPStackWeights, dataPIDScore['tra
 extMuonCandidates      = trackExt.query('DuplicatedEvent == False & track_score > @minMuonTrackScore  & vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton > @minProtonChi2 & track_chi2_muon < @maxMuonChi2 & track_chi2_ratio > @minRatioChi2')
 dirtMuonCandidates     = trackDirt.query('DuplicatedEvent == False & track_score > @minMuonTrackScore &  vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton > @minProtonChi2 & track_chi2_muon < @maxMuonChi2 & track_chi2_ratio > @minRatioChi2')
 overlayMuonCandidates  = trackOverlay.query('DuplicatedEvent == False & track_score > @minMuonTrackScore & vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton > @minProtonChi2 & track_chi2_muon < @maxMuonChi2 & track_chi2_ratio > @minRatioChi2')
-dataMuonCandidates    = trackData.query('DuplicatedEvent == False & track_score > @minMuonTrackScore &  vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton > @minProtonChi2 & track_chi2_muon < @maxMuonChi2 & track_chi2_ratio > @minRatioChi2')
+dataMuonCandidates     = trackData.query('DuplicatedEvent == False & track_score > @minMuonTrackScore &  vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton > @minProtonChi2 & track_chi2_muon < @maxMuonChi2 & track_chi2_ratio > @minRatioChi2')
 
-leadingMuonsExt = extMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
-leadingMuonsExt.columns = ["_".join(x) for x in leadingMuonsExt.columns.ravel()]
-trackExt = trackExt.join(leadingMuonsExt, on=["run", "subrun", "event"])
-trackExt.fillna(value={'track_mcs_mom_count' : 0}, inplace=True)
-
-leadingMuonsDirt = dirtMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
-leadingMuonsDirt.columns = ["_".join(x) for x in leadingMuonsDirt.columns.ravel()]
-trackDirt = trackDirt.join(leadingMuonsDirt, on=["run", "subrun", "event"])
-trackDirt.fillna(value={'track_mcs_mom_count' : 0}, inplace=True)
-
-leadingMuonsOverlay = overlayMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
-leadingMuonsOverlay.columns = ["_".join(x) for x in leadingMuonsOverlay.columns.ravel()]
-trackOverlay = trackOverlay.join(leadingMuonsOverlay, on=["run", "subrun", "event"])
-trackOverlay.fillna(value={'track_mcs_mom_count' : 0}, inplace=True)
-
-leadingMuons = dataMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
-leadingMuons.columns = ["_".join(x) for x in leadingMuons.columns.ravel()]
-trackData = trackData.join(leadingMuons, on=["run", "subrun", "event"])
-trackData.fillna(value={'track_mcs_mom_count' : 0}, inplace=True)
-
-maxProtonChi2 = 88.0
-extProtonCandidates      = trackExt.query('DuplicatedEvent == False & track_score > @minMuonTrackScore  & vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton < @maxProtonChi2 & track_mcs_mom_count > 0')
-dirtProtonCandidates     = trackDirt.query('DuplicatedEvent == False & track_score > @minMuonTrackScore &  vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton < @maxProtonChi2 & track_mcs_mom_count > 0')
-overlayProtonCandidates  = trackOverlay.query('DuplicatedEvent == False & track_score > @minMuonTrackScore & vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton < @maxProtonChi2 & track_mcs_mom_count > 0')
-dataProtonCandidates    = trackData.query('DuplicatedEvent == False & track_score > @minMuonTrackScore &  vtx_distance < @maxVtxDist & track_length > @minTrackL & generation == @requiredGen & track_chi2_proton < @maxProtonChi2 & track_mcs_mom_count > 0')
 
 #Select only the primary muon track based on the longest track
+extMuonCandidates = AggregateFrame(extMuonCandidates, "track_length", "max")
 
+#statFrame = extMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
+#statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
+#extMuonCandidates = extMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
+#extMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
 
-statFrame = extMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
-statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
-extMuonCandidates = extMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
-extMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
+dirtMuonCandidates = AggregateFrame(dirtMuonCandidates, "track_length", "max")
 
-statFrame = dirtMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
-statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
-dirtMuonCandidates = dirtMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
-dirtMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
+#statFrame = dirtMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
+#statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
+#dirtMuonCandidates = dirtMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
+#dirtMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
 
-statFrame = overlayMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
-statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
-overlayMuonCandidates = overlayMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
-overlayMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
+overlayMuonCandidates = AggregateFrame(overlayMuonCandidates, "track_length", "max")
 
-statFrame = dataMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
-statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
-dataMuonCandidates = dataMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
-dataMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
+#statFrame = overlayMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
+#statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
+#overlayMuonCandidates = overlayMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
+#overlayMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
 
-#leadingDataMuons   = dataMuons.groupby(level=["run", "subrun", "event"]).agg({"track_mcs_mom" : ["max", "count"]})
+dataMuonCandidates = AggregateFrame(dataMuonCandidates, "track_length", "max")
+
+#statFrame = dataMuonCandidates.groupby(level=["run", "subrun", "event"]).agg({"track_length": ["max"]})
+#statFrame.columns = ["_".join(x) for x in statFrame.columns.ravel()]
+#dataMuonCandidates = dataMuonCandidates.join(statFrame['track_length_max'], on=["run", "subrun", "event"])  
+#dataMuonCandidates.eval('isLongestTrack = (track_length == track_length_max)', inplace=True)
 
 #isMax_track_length
-overlayPrimMuonStack = '''[overlayMuonCandidates.query('mc_channel == "QE" & isLongestTrack == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "RES" & isLongestTrack == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "DIS" & isLongestTrack == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "2p2h" & isLongestTrack == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "NC / Other" & isLongestTrack == True')['VAR'].to_numpy(), dirtMuonCandidates.query('isLongestTrack == True')['VAR'].to_numpy(), extMuonCandidates.query('isLongestTrack == True')['VAR'].to_numpy()]'''
+overlayPrimMuonStack = '''[overlayMuonCandidates.query('mc_channel == "QE" & isMax_track_length == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "RES" & isMax_track_length == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "DIS" & isMax_track_length == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "2p2h" & isMax_track_length == True')['VAR'].to_numpy(), overlayMuonCandidates.query('mc_channel == "NC / Other" & isMax_track_length == True')['VAR'].to_numpy(), dirtMuonCandidates.query('isMax_track_length == True')['VAR'].to_numpy(), extMuonCandidates.query('isMax_track_length== True')['VAR'].to_numpy()]'''
 
 exec( "incPrimMuonStack   = "  + re.sub(r'VAR', 'track_length', overlayPrimMuonStack) )
 exec( "incPrimMuonStackWeights     = "  + re.sub(r'VAR', 'wgt', overlayPrimMuonStack) )
 
-#makeDataMCHistogram(incPrimMuonStack, incPrimMuonStackWeights, dataMuonCandidates.query('isLongestTrack == True')['track_length'].to_numpy(), lengthRange, 20, "PrimMuonL", ["Track Length", "Track Length (cm)", "Number of Events"])
+makeDataMCHistogram(incPrimMuonStack, incPrimMuonStackWeights, dataMuonCandidates.query('isMax_track_length == True')['track_length'].to_numpy(), lengthRange, 20, "PrimMuonL", ["Track Length", "Track Length (cm)", "Number of Events"])
 
 exec( "incPrimMuonChi2Mu  = "  + re.sub(r'VAR', 'track_chi2_muon', overlayPrimMuonStack) )
 
@@ -882,7 +831,7 @@ exec( "incPrimMuonNuScoreStack   = "  + re.sub(r'VAR', 'nu_score', overlayPrimMu
 
 exec( "incPrimMuonChi2FlashStack   = "  + re.sub(r'VAR', 'nu_flash_chi2', overlayPrimMuonStack) )
 
-makeDataMCHistogram(incPrimMuonChi2FlashStack, incPrimMuonStackWeights, dataMuonCandidates.query('isLongestTrack == True')['nu_flash_chi2'].to_numpy(), (0, 50), 50, "PrimMuonFlashChi2", ["Flash Chi2", "Chi2", "Number of Events"])
+makeDataMCHistogram(incPrimMuonChi2FlashStack, incPrimMuonStackWeights, dataMuonCandidates.query('isMax_track_length == True')['nu_flash_chi2'].to_numpy(), (0, 50), 50, "PrimMuonFlashChi2", ["Flash Chi2", "Chi2", "Number of Events"])
 
 #makeDataMCHistogram(incPrimMuonChi2FlashStack, incPrimMuonStackWeights, dataMuonCandidates.query('isLongestTrack == True')['nu_flash_chi2'].to_numpy(), (0, 15), 60, "PrimMuonFlashChi2Zoom", ["Flash Chi2", "Chi2", "Number of Events"])
 
@@ -914,40 +863,16 @@ maxFlashChi2 = 10
 minNeutrinoScoreFlashFails = 0.25
 maxFlashChi2Ratio  = 5
 
-extInclusiveEvents = extMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-dirtInclusiveEvents = dirtMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-overlayInclusiveEvents = overlayMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-dataInclusiveEvents = dataMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-
-extNProtonEvents = extProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-dirtNProtonEvents = dirtProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-overlayNProtonEvents = overlayProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-dataNProtonEvents = dataProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
-
-extInclusiveEventsContained = extMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
-dirtInclusiveEventsContained = dirtMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
-overlayInclusiveEventsContained = overlayMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
-dataInclusiveEventsContained = dataMuonCandidates.query('isLongestTrack == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
-
-extNProtonEventsContained = extProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
-dirtNProtonEventsContained = dirtProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
-overlayNProtonEventsContained = overlayProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
-dataNProtonEventsContained = dataProtonCandidates.query('isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
+extInclusiveEvents = extMuonCandidates.query('isMax_track_length == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
+dirtInclusiveEvents = dirtMuonCandidates.query('isMax_track_length == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
+overlayInclusiveEvents = overlayMuonCandidates.query('isMax_track_length == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
+dataInclusiveEvents = dataMuonCandidates.query('isMax_track_length == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & (nu_flash_chi2 < @maxFlashChi2 | nu_score > @minNeutrinoScoreFlashFails)')
 
 
-
-#SAVE THIS
-#print dataInclusiveEvnets.loc[(5774, 15,762 ),('track_chi2_muon', 'track_chi2_proton', 'track_chi2_ratio', 'isFiducial', 'nu_score', 'nu_flash_chi2', 'nu_mu_cc_selected')]
-
-event = (6752, 114, 5716)
-
-
-#makeMCHistogram(overlayInclusiveEvents.query('nu_mu_cc_selected == False')['nu_vx'], "QE", (0, 250.0), 50, "VerticesOutsideFVX", ["X Vertcies outside FV", "Vtx. x (cm)", "Number of Events"])
-
-#makeMCHistogram(overlayInclusiveEvents.query('nu_mu_cc_selected == False')['nu_vy'], "QE", (-150, 150.0), 50, "VerticesOutsideFVY", ["Y Vertcies outside FV", "Vtx. y (cm)", "Number of Events"])
-
-#makeMCHistogram(overlayInclusiveEvents.query('nu_mu_cc_selected == False')['nu_vz'], "QE", (0, 1200.0), 120, "VerticesOutsideFVZ", ["Z Vertcies outside FV", "Vtx. z (cm)", "Number of Events"])
-
+extInclusiveEventsContained = extMuonCandidates.query('isMax_track_length == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
+dirtInclusiveEventsContained = dirtMuonCandidates.query('isMax_track_length == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
+overlayInclusiveEventsContained = overlayMuonCandidates.query('isMax_track_length== True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
+dataInclusiveEventsContained = dataMuonCandidates.query('isMax_track_length == True & isFiducial == True & nu_pdg == @numupdg & daughters_start_contained == True & flash_chi2_ratio < @maxFlashChi2Ratio & nu_score > @minNeutrinoScore & isContained == True')
 
 overlayInclusiveStack = '''[overlayInclusiveEvents.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "NC / Other"')['VAR'].to_numpy(), dirtInclusiveEvents['VAR'].to_numpy(), extInclusiveEvents['VAR'].to_numpy()]'''
 overlayInclusiveStackOptWgt = '''[overlayInclusiveEvents.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy(), overlayInclusiveEvents.query('mc_channel == "NC / Other"')['VAR'].to_numpy(), dirtInclusiveEvents['wgt'].to_numpy(), extInclusiveEvents['wgt'].to_numpy()]'''
@@ -984,22 +909,6 @@ exec( "overlayPrimMuonThetaStack     = "  + re.sub(r'VAR', 'track_dirz', overlay
 
 makeDataMCHistogram(overlayPrimMuonThetaStack, overlayIsSelectedInclusiveWeights, dataInclusiveEvents['track_dirz'].to_numpy(), phiRange, 30, "InclusiveEventsPrimMuonTheta", ["Outgoing Muon Angle (Before Weights)", "Cosine (theta)", "Number of Primary Muons"], [], [], [0.0, 2.0])
 makeDataMCHistogram(overlayPrimMuonThetaStack, overlayIsSelectedInclusiveOpticalWeights, dataInclusiveEvents['track_dirz'].to_numpy(), phiRange, 30, "InclusiveEventsPrimMuonThetaRW", ["Outgoing Muon Angle   (After Weights)", "Cosine (theta)", "Number of Primary Muons"], [], [], [0.0, 2.0])
-
-nProtonProtonStack = '''[overlayNProtonEvents.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "NC / Other" ')['VAR'].to_numpy(), dirtNProtonEvents['VAR'].to_numpy(), extNProtonEvents['VAR'].to_numpy()]'''
-nProtonProtonStackOptWgt = '''[overlayNProtonEvents.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "NC / Other" ')['VAR'].to_numpy(), dirtNProtonEvents['wgt'].to_numpy(), extNProtonEvents['wgt'].to_numpy()]'''
-
-
-exec( "nProtoneWeights   = "  + re.sub(r'VAR', 'wgt', nProtonProtonStack) )
-exec( "nProtonOpticalWeights   = "  + re.sub(r'VAR', 'wgt_opt', nProtonProtonStackOptWgt) )
-
-exec( "nProtonMomentumStack = " + re.sub(r'VAR', 'track_range_mom_p', nProtonProtonStack))
-
-makeDataMCHistogram(nProtonMomentumStack, nProtoneWeights, dataNProtonEvents['track_range_mom_p'].to_numpy(), muonMomentumRange, 30, "NProtonEventsMomentum", ["Proton Momentum (Before Weights)", "Momentum (GeV/c)", "Number of Protons"], [0.5, 2.0], [], [0.0, 2.0])
-makeDataMCHistogram(nProtonMomentumStack, nProtonOpticalWeights, dataNProtonEvents['track_range_mom_p'].to_numpy(), muonMomentumRange, 30, "NProtonEventsMomentumRW", ["Proton Momentum (After Weights)", "Momentum (GeV/c)", "Number of Protons"], [0.5, 2.0], [], [0.0, 2.0])
-
-nProtonProtonStack = '''[overlayNProtonEvents.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "NC / Other" ')['VAR'].to_numpy(), dirtNProtonEvents['VAR'].to_numpy(), extNProtonEvents['VAR'].to_numpy()]'''
-nProtonProtonStackOptWgt = '''[overlayNProtonEvents.query('mc_channel == "QE"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "RES"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "DIS"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "2p2h"')['VAR'].to_numpy(), overlayNProtonEvents.query('mc_channel == "NC / Other" ')['VAR'].to_numpy(), dirtNProtonEvents['wgt'].to_numpy(), extNProtonEvents['wgt'].to_numpy()]'''
-
 
 
 sys.exit()

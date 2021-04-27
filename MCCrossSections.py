@@ -53,12 +53,15 @@ def getPhi(pY, pX):
 def getQ2(nuE, nuMu, thetaMu):
     return 4*nuE*nuMu*math.pow(math.sin(thetaMu/2), 2)
 
-def getW2(Ehad, Q2):
+def getW2(Ehad, Q2, interaction):
     targetMass = 0.989
+    #if it's a 2p 2 h, you have 2ps as your target! Wakka Wakka Wakka!
+    if(interaction == "2p2h"):
+      targetMass = 2*targetMass
     return 2*targetMass*Ehad + math.pow(targetMass, 2) - Q2
 
-def getW(Ehad, Q2):
-    W2 = getW2(Ehad, Q2)
+def getW(Ehad, Q2, interaction):
+    W2 = getW2(Ehad, Q2, interaction)
     if(W2 >= 0.0):
       return math.sqrt(W2)
     else:
@@ -145,8 +148,8 @@ TPC_X                = 256.35 #cm
 TPC_Y                = 233   #cm
 TPC_Z                = 1000  #cm
 TPC_Volume           = TPC_X*TPC_Y*TPC_Z #cm3
-TPC_Area             = TPC_X*TPC_Y #cm2
-#TPC_Area             = 1.0
+#TPC_Area             = TPC_X*TPC_Y #cm2
+TPC_Area             = 1.0
 CryoR                = 191.61 #cm from gdml
 CryoL                = 1086.49 #cm from gdml
 CryoVolume           = np.pi*CryoL*CryoR**2
@@ -154,38 +157,47 @@ nTargetProtons       = (nProtonsPerNucleus*argonDensity*CryoVolume*avosNumber / 
 nTargetNeutrons      = (nNeutronsPerNucleus*argonDensity*CryoVolume*avosNumber / molMass)
 
 neutrinoEnergyRange = (0.0, 10.0)
-invariantMassRange = (0.0, 10.0)
+energyTransferRange = (0.0, 2.0)
+invariantMassRange = (0.0, 5.0)
 phiRange           = (-1.0, 1.0)
 nBins              = 200
 
-fluxScale   = 2.43e11
-detectorPositionScale = 1.029
+#fluxScale   = 2.43e11
+#fluxScale    = 1e21
+fluxScale    = 1.0
+#detectorPositionScale = 1.029 #1.029
+detectorPositionScale = 1.0
 #fluxScale   = 1.0
 fluxPOT     = fluxScale
 binWidth    = (neutrinoEnergyRange[1] - neutrinoEnergyRange[0])/nBins
 
-InputFiles      = ["/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_nu_overlay_run1_big_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_on_data_run1_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_off_data_run1_mcc9.root"]
-fluxFileName    = "/uboone/app/users/afurmans/CCNproton_ccinc/analysis/UBAna/Flux/MCC8_FluxHistograms_Uncertainties.root"
+InputFiles      = ["/uboone/data/users/joelam/NuMuCC_Sept16/run1/nucc_nu_overlay_run1_big_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_on_data_run1_mcc9.root", "/uboone/app/users/wvdp/RootTrees/v20/run1/nucc_off_data_run1_mcc9.root"]
+#fluxFileName    = "/uboone/app/users/afurmans/CCNproton_ccinc/analysis/UBAna/Flux/MCC8_FluxHistograms_Uncertainties.root"
+fluxFileName    = "/pnfs/uboone/persistent/uboonebeam/bnb_hist/bnb_hist_fluxes_07.11.2017_470/FluxHist_volAVTPC.root"
 splineFileName  = "/cvmfs/uboone.opensciencegrid.org/products/genie_xsec/v3_00_04a/NULL/G1810a0211a-k250-e1000/data/xsec_graphs.root"
 splineDir       = "nu_mu_Ar40"
 fluxFile        = ROOT.TFile.Open(fluxFileName)
 splineFile      = ROOT.TFile.Open(splineFileName)
-fluxHistogram   = fluxFile.Get("numu/numu_CV_AV_TPC")
+#fluxHistogram   = fluxFile.Get("numu/numu_CV_AV_TPC")
+fluxHistogram   = fluxFile.Get("numu")
 splineGraphs    = ["%s/tot_cc" % splineDir, "%s/qel_cc_n" % splineDir, "%s/mec_cc" % splineDir]
 
 overlayEvents = uproot.open(InputFiles[0])["NuCCanalyzer"]["Event"]
 
 overlayPOT    = uproot.open(InputFiles[0])["NuCCanalyzer"]["subruns"]
 
-mcPOT         = pd.Series(overlayPOT.array("pot")).sum()
-#mcPOT = 1.0
+#mcPOT         = pd.Series(overlayPOT.array("pot")).sum()
+mcPOT = 1.0
 
 fluxBins = np.empty(fluxHistogram.GetNbinsX()+1, dtype=float)
 fluxHistogram.GetXaxis().GetLowEdge(fluxBins)
+
 fluxNeutrinos = ((mcPOT*detectorPositionScale)/(TPC_Area*fluxScale))*np.array([fluxHistogram.GetBinContent(bin+1) for bin in range(fluxHistogram.GetNbinsX()+1)], dtype=float)
 fluxBins = fluxBins[:-1]
+#print fluxNeutrinos
 fluxNeutrinos = fluxNeutrinos[:-1]
 #print fluxBins
+
 #print len(fluxNeutrinos)
 
 
@@ -195,9 +207,10 @@ splineBins    = []
 
 
 for splineName in splineGraphs:
-    
+    print splineName
     graph = splineFile.Get(splineName)
     splineList.append(np.array(list(graph.GetY() ) ) )
+    print list(graph.GetY())[:10]
     splineBins.append(np.array(list(graph.GetX() ) ) )
 
 #totalNumus        = mcPOT*np.sum(fluxNeutrinos, dtype=float)/(TPC_Area*fluxScale)
@@ -242,10 +255,13 @@ overlayEvents.insert(overlayEvents.shape[1], "DuplicatedEvent", overlayEvents.du
 overlayEvents.insert(overlayEvents.shape[1], "mc_channel", [getChan(x, y) for x, y in zip(overlayEvents['mc_nu_interaction_type'], overlayEvents['mc_nu_ccnc'])] ) #Classify neutrino events based on CC / NC and event Type
 overlayEvents.eval('mc_Ehad = mc_nu_energy - mc_nu_lepton_energy', inplace=True)#Insert the true energy transfer (nu)
 overlayEvents.insert(overlayEvents.shape[1], "mc_expQ2", [getQ2(x, y, z) for x, y, z in zip(overlayEvents['mc_nu_energy'], overlayEvents['mc_nu_lepton_energy'], overlayEvents['mc_nu_lepton_theta'])] )
-overlayEvents.insert(overlayEvents.shape[1], "mc_expW", [getW(x, y) for x, y in zip(overlayEvents['mc_Ehad'], overlayEvents['mc_expQ2'] ) ] )
+overlayEvents.insert(overlayEvents.shape[1], "mc_expW", [getW(x, y, z) for x, y, z in zip(overlayEvents['mc_Ehad'], overlayEvents['mc_expQ2'], overlayEvents['mc_channel'] ) ] )
 overlayEvents.insert(overlayEvents.shape[1], "mc_expXbj", [getXbj(x, y) for x, y in zip(overlayEvents['mc_Ehad'], overlayEvents['mc_expQ2'] ) ] )
 overlayEvents.insert(overlayEvents.shape[1], "mc_expY", [getInel(x, y) for x, y in zip(overlayEvents['mc_Ehad'], overlayEvents['mc_nu_energy'] ) ] )
+overlayEvents.eval('mc_q3 = sqrt(mc_expQ2 + mc_Ehad*mc_Ehad)', inplace=True)#Insert the true 3 momentum transfer (q3)
 overlayEvents.insert(overlayEvents.shape[1], "wgt", overlayWeights )
+
+#print overlayEvents.query('mc_channel == "2p2h" & mc_nu_pdg == @neutrinoPDG')[['mc_nu_lepton_theta', 'mc_nu_energy', 'mc_nu_lepton_energy',  'mc_expQ2']]
 
 #filteredEvents.insert(filteredEvents.shape[1], "wgt", [getInel(x, y) for x, y in zip(filteredEvents['mc_Ehad'], filteredEvents['mc_nu_energy'] ) ] )
 
@@ -257,8 +273,16 @@ weightsArray = [overlayEvents.query('mc_channel == "QE" & mc_nu_pdg == @neutrino
 
 exec( "energyStack = " + re.sub(r'VAR', 'mc_nu_energy', stackCode) )
 #exec( "energyStackSum = " + re.sub(r'VAR', 'mc_nu_energy', stackSumCode) )
-exec( "wStack = " + re.sub(r'VAR', 'mc_expW', stackCode) )
+exec( "wStack  = " + re.sub(r'VAR', 'mc_expW', stackCode) )
+exec( "Q0Stack =" + re.sub(r'VAR', 'mc_Ehad', stackCode) )
+exec( "Q2Stack =" + re.sub(r'VAR', 'mc_expQ2', stackCode) )
+exec( "Q3Stack =" + re.sub(r'VAR', 'mc_q3', stackCode) )
 
+Q0Mec = overlayEvents.query('mc_channel == "2p2h" & mc_nu_pdg == @neutrinoPDG')['mc_Ehad'].to_numpy()
+Q3Mec = overlayEvents.query('mc_channel == "2p2h" & mc_nu_pdg == @neutrinoPDG')['mc_q3'].to_numpy()
+
+#wStack = [overlayEvents.query('mc_channel == "2p2h" & mc_nu_pdg == @neutrinoPDG')['mc_expW'].to_numpy()]
+#wWeights = [overlayEvents.query('mc_channel == "2p2h" & mc_nu_pdg == @neutrinoPDG')['wgt'].to_numpy()]
 
 
 
@@ -269,7 +293,7 @@ sum     = np.zeros(len(fluxBins[:-1]), dtype=float)
 sumErrs = np.zeros(len(fluxBins[:-1]), dtype=float)
 #print fluxBins[:-1]
 bin_centers       = (fluxBins[:-1] + fluxBins[1:]) / 2
-#print bin_centers
+print bin_centers
 for i in range(len(energyStack)):
   counts, bin_edges, something = sci.stats.binned_statistic(energyStack[i], energyStack[i], "count", bins=fluxBins, range=neutrinoEnergyRange)
   crossSectionStack.append(np.nan_to_num(OverlayScale*counts/fluxNeutrinos[:-1]) )
@@ -286,10 +310,14 @@ for i in range(len(energyStack)):
 #plt.hist(energyStack, bins=nBins, stacked=True, range=neutrinoEnergyRange, color = ['b', 'g', 'y', 'r'], weights=weightsArray )
 sumErrs = OverlayScale*np.sqrt(sumErrs)/fluxNeutrinos[:-1]
 
-bin_centers       = (fluxBins[:-1] + fluxBins[1:]) / 2
+figNo = 1
+splineBinEdges   = (splineBins[0][:]+np.insert(splineBins[0][1:],-1,500.0) ) /2
+splineBinEdges = np.insert(splineBinEdges, 0, 0.0)
+print splineBins[0][:10]
+print splineList[0][:10]
 splineValues = np.interp(bin_centers, splineBins[0], splineList[0], right=0.0)
-fig = plt.figure(1)
-#plt.scatter(fluxStack[0], sum, color = "black")
+#print splineValues
+fig = plt.figure(figNo)
 plt.errorbar(fluxBins[:-1], sum, yerr=sumErrs, fmt='o', color='black')
 plt.plot(fluxBins[:-1], splineValues, color='red')
 plt.legend(['Spline', 'CCInc'])
@@ -298,25 +326,37 @@ plt.xlabel("Energy (GeV)")
 plt.ylabel("Number of Events / %e POT" % mcPOT)
 plt.xlim(0.0, 5.0)
 plt.ylim(0.0, 200.0)
+figNo = figNo + 1
 #plt.show()
 
-fig = plt.figure(2)
-plt.hist(energyStack, bins=fluxBins, stacked=True, range=neutrinoEnergyRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
-plt.plot(fluxBins[:-1], 33*fluxNeutrinos[:-1], color='black')
-plt.legend(['MCC8 Flux', 'QE', 'RES', 'DIS', '2p2h'])
-plt.title("Neutrino Energy")
-plt.xlabel("E_{\nu} (GeV)")
-plt.ylabel("Number of Events / %e POT" % mcPOT)
+fig = plt.figure(figNo)
+plt.hist(energyStack, bins=fluxBins[:-1], stacked=True, density=True, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+#plt.plot(fluxBins[:-1], fluxNeutrinos[:-1], color='black')
+#plt.legend(['SBN Flux at MicroBooNE', 'QE', 'RES', 'DIS', '2p2h'])
+plt.legend(['QE', 'RES', 'DIS', '2p2h'], prop={'size' : 16})
+#plt.title("Neutrino Energy", fontsize=20)
+plt.xlabel("E (GeV)", fontsize=20)
+plt.xticks(fontsize=14)
+plt.yticks(fontsize=14)
+plt.ylabel("Arb.", fontsize=20)
 plt.xlim(0.0, 5.0)
+figNo = figNo + 1
 #plt.show()
 
-fig = plt.figure(3)
-plt.hist(energyStack, bins=fluxBins[:-1], stacked=True, density=True, range=neutrinoEnergyRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
-fluxXSec = np.multiply(fluxNeutrinos[:-1], splineValues)
-norm = np.trapz(fluxXSec, dx=0.05)
+'''
 print "Normalization: %.2e" % norm
 print fluxBins
 print (fluxXSec/norm)
+'''
+
+fig = plt.figure(figNo)
+plt.hist(energyStack, bins=fluxBins[:-1], stacked=True, density=True, range=neutrinoEnergyRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+
+#fluxXSec = np.multiply(fluxNeutrinos[:-1], splineValues)
+binned_flux, bin_edges, something = sci.stats.binned_statistic(fluxBins[:-1], fluxNeutrinos[:-1], "sum", bins=splineBinEdges[:-1])
+#print binned_flux
+fluxXSec = np.multiply(splineValues,fluxNeutrinos[:-1])
+norm = np.trapz(fluxXSec, dx=0.05)
 
 plt.plot(fluxBins[:-1], fluxXSec/norm, color='black')
 plt.legend(['Flux X Xsection', 'QE', 'RES', 'DIS', '2p2h'])
@@ -324,6 +364,80 @@ plt.title("Neutrino Energy")
 plt.xlabel("Energy (GeV)")
 plt.ylabel("Abr.")
 plt.xlim(0.0, 5.0)
+figNo = figNo + 1
+#plt.show()
+
+fig = plt.figure(figNo)
+plt.hist(Q0Stack, bins=fluxBins[:-1], stacked=True, range=energyTransferRange, density=True, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+plt.legend(['QE', 'RES', 'DIS', '2p2h'], prop={'size' : 6})
+plt.title("Energy Transfer")
+plt.xlabel("q_0 (GeV)")
+plt.ylabel("Arb.")
+plt.xlim(0.0, 2.0)
+figNo = figNo + 1
+#plt.show()
+
+fig = plt.figure(figNo)
+plt.hist(Q3Stack, bins=fluxBins[:-1], stacked=True, range=energyTransferRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+plt.legend(['QE', 'RES', 'DIS', '2p2h'])
+plt.title("Momentum Transfer")
+plt.xlabel("q_3 (GeV)")
+plt.ylabel("Number of Events / %e POT" % mcPOT)
+plt.xlim(0.0, 2.0)
+figNo = figNo + 1
+
+fig = plt.figure(figNo)
+plt.hist(wStack, bins=fluxBins[:-1], stacked=True, range=invariantMassRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+plt.legend(['QE', 'RES', 'DIS', '2p2h'])
+plt.title("Invariant Mass")
+plt.xlabel("W (GeV/c)^2")
+plt.ylabel("Number of Events / %e POT" % mcPOT)
+plt.xlim(0.0, 5.0)
+figNo = figNo + 1
+
+fig = plt.figure(figNo)
+plt.hist(Q2Stack, bins=fluxBins[:-1], stacked=True, range=invariantMassRange, weights=weightsArray, color = ['b', 'g', 'y', 'r'])
+plt.legend(['QE', 'RES', 'DIS', '2p2h'])
+plt.title("Four Momentum Transfer")
+plt.xlabel("Q2 (GeV/c)^2")
+plt.ylabel("Number of Events / %e POT" % mcPOT)
+plt.xlim(0.0, 5.0)
+figNo = figNo + 1
+
+fig = plt.figure(figNo)
+plt.hist2d(Q3Mec, Q0Mec, bins=[100, 100], cmin=0.01, range=[energyTransferRange, energyTransferRange], normed=True)
+#plt.legend(['2p2h'])
+plt.colorbar()
+plt.title("Momentum Transfer")
+plt.xlabel("q_3 (GeV)")
+plt.ylabel("q_0 (GeV)")
+plt.xlim(0.0, 1.2)
+plt.ylim(0.0, 1.2)
+figNo = figNo + 1
+
+fig = plt.figure(figNo)
+plt.hist2d(Q3Stack[0], Q0Stack[0], bins=[100, 100], cmin=0.01, range=[energyTransferRange, energyTransferRange], normed=True)
+#plt.legend(['2p2h'])
+plt.colorbar()
+plt.title("Momentum Transfer")
+plt.xlabel("q_3 (GeV)")
+plt.ylabel("q_0 (GeV)")
+plt.xlim(0.0, 1.2)
+plt.ylim(0.0, 1.2)
+figNo = figNo + 1
+
+fig = plt.figure(figNo)
+plt.hist2d(Q3Stack[2], Q0Stack[2], bins=[100, 100], cmin=0.01, range=[energyTransferRange, energyTransferRange], normed=True)
+#plt.legend(['2p2h'])
+plt.colorbar()
+plt.title("Momentum Transfer")
+plt.xlabel("q_3 (GeV)")
+plt.ylabel("q_0 (GeV)")
+plt.xlim(0.0, 1.2)
+plt.ylim(0.0, 1.2)
+figNo = figNo + 1
+
 plt.show()
+
 
 sys.exit()
